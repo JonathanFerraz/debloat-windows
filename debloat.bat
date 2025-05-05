@@ -68,6 +68,18 @@ call "%~dp0assets\remove-edge.bat"
 call "%~dp0assets\ms-gamebar-annoyance.bat"
 
 :: ----------------------------
+:: 3.1 Remoção do OneDrive (via PowerShell)
+:: ----------------------------
+echo.
+echo [ETAPA 3.1/8] Removendo OneDrive completamente...
+powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0assets\onedrive-removal.ps1"
+if %ERRORLEVEL% EQU 0 (
+    echo [SUCESSO] OneDrive removido
+) else (
+    echo [AVISO] Falha na remoção do OneDrive (verifique o PowerShell)
+)
+
+:: ----------------------------
 :: 4. Otimizações de Rede
 :: ----------------------------
 echo.
@@ -103,7 +115,7 @@ DISM /Online /Disable-Feature /FeatureName:Recall /NoRestart
 :: ----------------------------
 echo.
 echo [ETAPA 6/8] Aplicando otimizações de sistema...
-call "%~dp0assets\V2\registry_v2.bat"
+call "%~dp0assets\registry.bat"
 call "%~dp0services.bat"
 call "%~dp0assets\telemetry.bat"
 
