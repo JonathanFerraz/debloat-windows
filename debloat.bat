@@ -1,78 +1,78 @@
 @echo off
 :: ==============================================
 :: Windows Debloat & Optimization Script
-:: Versão: 3.0 | Data: 2025-04-27
+:: Version: 3.0 | Date: 2025-04-27
 :: ==============================================
-:: Descrição:
-:: Este script realiza desbloat completo, otimizações
-:: de sistema e configurações de privacidade no Windows
+:: Description:
+:: This script performs complete debloating, optimizations,
+:: and privacy settings adjustments on Windows.
 :: ==============================================
 
 :: ----------------------------
-:: Verificação de Administrador
+:: Administrator Check
 :: ----------------------------
 NET FILE > NUL 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERRO] Este script requer privilégios de administrador
-    echo Execute como Administrador e tente novamente
+    echo [ERROR] This script requires administrator privileges.
+    echo Please run as Administrator and try again.
     echo.
     pause
     exit /b
 )
 
 :: ----------------------------
-:: Configurações Iniciais
+:: Initial Settings
 :: ----------------------------
 setlocal EnableDelayedExpansion
 color 0a
-title Windows Debloat Tool v3.0
+title Ryzen Windows Debloat Tool v3.0
 echo.
 echo ==============================================
-echo INICIANDO PROCESSO DE OTIMIZAÇÃO
+echo STARTING OPTIMIZATION PROCESS
 echo ==============================================
 
 :: ---------------------------------
-:: 1. Criação de Ponto de Restauração
+:: 1. Create a Restore Point
 :: ---------------------------------
 echo.
-echo [ETAPA 1/8] Criando ponto de restauração...
+echo [STEP 1/8] Creating a restore point...
 powershell -command "Enable-ComputerRestore -Drive $env:SystemDrive"
 powershell -command "Checkpoint-Computer -Description 'Pre-Debloat' -RestorePointType 'MODIFY_SETTINGS'"
 if %ERRORLEVEL% EQU 0 (
-    echo [SUCESSO] Ponto de restauração criado
+    echo [SUCCESS] Restore point created.
 ) else (
-    echo [AVISO] Falha ao criar ponto de restauração
+    echo [WARNING] Failed to create restore point.
 )
 
 :: ----------------------------
-:: 2. Limpeza de Sistema
+:: 2. System Cleanup
 :: ----------------------------
 echo.
-echo [ETAPA 2/8] Executando limpeza de sistema...
+echo [STEP 2/8] Performing system cleanup...
 call "%~dp0assets\remove-temp.bat"
 echo.
-echo Executando limpeza de disco...
+echo Running Disk Cleanup...
 cleanmgr /verylowdisk /sagerun:5
 echo.
-echo Verificando integridade do sistema...
+echo Checking system integrity...
 sfc /scannow
 
 :: ----------------------------
-:: 3. Remoção de Aplicativos
+:: 3. App Removal
 :: ----------------------------
 echo.
-echo [ETAPA 3/8] Removendo aplicativos desnecessários...
+echo [STEP 3/8] Removing unnecessary apps...
 call "%~dp0assets\remove-apps.bat"
 call "%~dp0assets\remove-edge.bat"
 call "%~dp0assets\ms-gamebar-annoyance.bat"
 
 :: ----------------------------
-:: 4. Otimizações de Rede
+:: 4. Network Optimizations
 :: ----------------------------
 echo.
-echo [ETAPA 4/8] Otimizando configurações de rede...
-echo Redefinindo configurações TCP/IP...
+echo [STEP 4/8] Optimizing network settings...
+echo Resetting TCP/IP settings...
 ipconfig /flushdns
 ipconfig /release
 ipconfig /renew
@@ -82,78 +82,78 @@ netsh int tcp set global rss=disabled
 netsh int tcp set global autotuninglevel=restricted
 
 :: ----------------------------
-:: 5. Desativação de Recursos
+:: 5. Disabling Features
 :: ----------------------------
 echo.
-echo [ETAPA 5/8] Desativando recursos do Windows...
-echo Desativando Internet Explorer...
+echo [STEP 5/8] Disabling Windows features...
+echo Disabling Internet Explorer...
 dism /online /Remove-Capability /CapabilityName:Browser.InternetExplorer~~~~0.0.11.0 /NoRestart
 
-echo Desativando Hyper-V...
+echo Disabling Hyper-V...
 dism /online /Disable-Feature /FeatureName:Microsoft-Hyper-V-All /NoRestart
 
-echo Desativando Windows Media Player...
+echo Disabling Windows Media Player...
 dism /online /Disable-Feature /FeatureName:WindowsMediaPlayer /NoRestart
 
-echo Desativando Recall...
+echo Disabling Recall...
 DISM /Online /Disable-Feature /FeatureName:Recall /NoRestart
 
 :: ----------------------------
-:: 6. Configurações do Sistema
+:: 6. System Settings
 :: ----------------------------
 echo.
-echo [ETAPA 6/8] Aplicando otimizações de sistema...
+echo [STEP 6/8] Applying system optimizations...
 call "%~dp0assets\registry.bat"
 call "%~dp0services.bat"
 call "%~dp0assets\telemetry.bat"
 
 :: ----------------------------
-:: 7. Configurações de Energia
+:: 7. Power Settings
 :: ----------------------------
 echo.
-echo [ETAPA 7/8] Configurando plano de energia...
-echo Ativando modo Ultimate Performance...
+echo [STEP 7/8] Configuring power plan...
+echo Activating Ultimate Performance mode...
 powershell -command "$scheme = powercfg -list | Select-String 'Ultimate Performance'; if (-not $scheme) { powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 }"
 for /f "tokens=2 delims=:(" %%i in ('powercfg -list ^| findstr "Ultimate Performance"') do (
     powercfg -setactive %%i
 )
-echo Desativando hibernação...
+echo Disabling hibernation...
 powercfg /hibernate off
 
 :: ----------------------------
-:: 8. Finalização
+:: 8. Finalization
 :: ----------------------------
 echo.
-echo [ETAPA 8/8] Finalizando otimizações...
-:: Verifica integridade do sistema
+echo [STEP 8/8] Finalizing optimizations...
+:: Check system integrity
 sfc /scannow
 
-:: Otimiza armazenamento
+:: Optimize storage
 defrag C: /O /U
 
-:: Reinicia serviços críticos
+:: Restart critical services
 net stop "Windows Audio" & net start "Windows Audio"
 
 :: ----------------------------
-:: Conclusão
+:: Conclusion
 :: ----------------------------
 echo.
 echo ==============================================
-echo OTIMIZAÇÃO CONCLUÍDA COM SUCESSO!
+echo OPTIMIZATION COMPLETED SUCCESSFULLY!
 echo ==============================================
 echo.
-echo Recomendações:
-echo 1. Reinicie seu computador
-echo 2. Verifique se todos os drivers estão atualizados
-echo 3. Configure seus programas essenciais
+echo Recommendations:
+echo 1. Restart your computer.
+echo 2. Check if all drivers are updated.
+echo 3. Configure your essential programs.
 echo.
-echo Observações:
-echo - Algumas alterações requerem reinicialização
-echo - Recursos removidos não estarão disponíveis
+echo Notes:
+echo - Some changes require a restart.
+echo - Removed features will no longer be available.
 echo.
 pause
 
-:: Reiniciar Explorer para aplicar mudanças
+:: Restart Explorer to apply changes
 taskkill /f /im explorer.exe >nul
 start explorer.exe
 exit /b 0
