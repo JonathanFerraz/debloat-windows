@@ -1,0 +1,61 @@
+# Windows thumbnail cache
+Thumbs.db
+
+# Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Visual Studio Code settings
+.vscode/
+
+# Node.js dependencies
+node_modules/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Mac OS X system files
+.DS_Store
+
+# Log files
+*.log
+
+# Backup files
+*.bak
+*.tmp
+
+# Temporary files
+*.temp
+*.tmp
+*.swp
+*.swo
+
+# IDE specific files
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Compiled files
+*.class
+*.o
+*.out
+*.exe
+*.dll
+
+# Other system files
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+
+# Ignore all files in the following directories
+# (uncomment if necessary)
+# /path/to/directory/*
