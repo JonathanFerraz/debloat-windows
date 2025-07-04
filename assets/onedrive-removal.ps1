@@ -2,8 +2,8 @@
     try {
         # Stop OneDrive processes
         $processesToStop = @("OneDrive", "FileCoAuth", "FileSyncHelper")
-        foreach ($processName in $processesToStop) { 
-            Get-Process -Name $processName -ErrorAction SilentlyContinue | 
+        foreach ($processName in $processesToStop) {
+            Get-Process -Name $processName -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
         }
         Start-Sleep -Seconds 1
@@ -11,7 +11,7 @@
     catch {
         # Continue if process stopping fails
     }
-    
+
     # Check and execute uninstall strings from registry
     $registryPaths = @(
         "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OneDriveSetup.exe",
@@ -42,20 +42,20 @@
 
     try {
         # Remove OneDrive AppX package
-        Get-AppxPackage -Name "*OneDrive*" -ErrorAction SilentlyContinue | 
+        Get-AppxPackage -Name "*OneDrive*" -ErrorAction SilentlyContinue |
         Remove-AppxPackage -ErrorAction SilentlyContinue
     }
     catch {
         # Continue if AppX removal fails
     }
-    
+
     # Uninstall OneDrive using setup files
     $oneDrivePaths = @(
         "$env:SystemRoot\SysWOW64\OneDriveSetup.exe",
         "$env:SystemRoot\System32\OneDriveSetup.exe",
         "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe"
     )
-    
+
     foreach ($path in $oneDrivePaths) {
         try {
             if (Test-Path $path) {
@@ -67,19 +67,19 @@
             continue
         }
     }
-    
+
     try {
         # Remove OneDrive scheduled tasks
-        Get-ScheduledTask -ErrorAction SilentlyContinue | 
-        Where-Object { $_.TaskName -match 'OneDrive' -and $_.TaskName -ne 'OneDriveRemoval' } | 
-        ForEach-Object { 
-            Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue 
+        Get-ScheduledTask -ErrorAction SilentlyContinue |
+        Where-Object { $_.TaskName -match 'OneDrive' -and $_.TaskName -ne 'OneDriveRemoval' } |
+        ForEach-Object {
+            Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
         }
     }
     catch {
         # Continue if task removal fails
     }
-    
+
     try {
         # Configure registry settings
         $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\OneDrive"
@@ -87,34 +87,34 @@
             New-Item -Path $regPath -Force -ErrorAction SilentlyContinue | Out-Null
         }
         Set-ItemProperty -Path $regPath -Name "KFMBlockOptIn" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-        
+
         # Remove OneDrive from startup
         Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "OneDriveSetup" -ErrorAction SilentlyContinue
-        
+
         # Remove OneDrive from Navigation Pane
         Remove-Item -Path "Registry::HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{018D5C66-4533-4307-9B53-224DE2ED1FE6}" -Recurse -Force -ErrorAction SilentlyContinue
     }
     catch {
         # Continue if registry operations fail
     }
-    
+
     # Function to handle robust folder removal
     function Remove-OneDriveFolder {
         param ([string]$folderPath)
-        
+
         if (-not (Test-Path $folderPath)) {
             return
         }
-        
+
         try {
             # Stop OneDrive processes if they're running
-            Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue | 
+            Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
-            
+
             # Take ownership and grant permissions
             $null = Start-Process "takeown.exe" -ArgumentList "/F `"$folderPath`" /R /A /D Y" -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
             $null = Start-Process "icacls.exe" -ArgumentList "`"$folderPath`" /grant administrators:F /T" -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
-            
+
             # Try direct removal
             Remove-Item -Path $folderPath -Force -Recurse -ErrorAction SilentlyContinue
         }
@@ -194,10 +194,10 @@ del /F /Q "%~f0"
                 # Take ownership and grant full permissions
                 $null = Start-Process "takeown.exe" -ArgumentList "/F `"$file`"" -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
                 $null = Start-Process "icacls.exe" -ArgumentList "`"$file`" /grant administrators:F" -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
-            
+
                 # Attempt direct removal
                 Remove-Item -Path $file -Force -ErrorAction SilentlyContinue
-            
+
                 # If file still exists, schedule it for deletion on next reboot
                 if (Test-Path $file) {
                     $pendingRename = "$file.pending"
@@ -211,4 +211,3 @@ del /F /Q "%~f0"
             }
         }
     }
-

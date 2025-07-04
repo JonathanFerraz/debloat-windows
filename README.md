@@ -1,3 +1,5 @@
+![License](https://badgen.net/github/license/JonathanFerraz/debloat-windows)
+
 # Windows Debloat & Optimization Tool
 
 ![Windows Logo](https://img.icons8.com/color/96/000000/windows-10.png)

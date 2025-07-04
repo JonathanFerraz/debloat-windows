@@ -210,6 +210,39 @@ net stop diagsvc /y >nul 2>&1 && sc config diagsvc start= disabled >nul 2>&1 && 
 net stop pla /y >nul 2>&1 && sc config pla start= disabled >nul 2>&1 && echo pla - Stopped and disabled
 net stop workfolderssvc /y >nul 2>&1 && sc config workfolderssvc start= disabled >nul 2>&1 && echo workfolderssvc - Stopped and disabled
 net stop WerSvc /y >nul 2>&1 && sc config WerSvc start= disabled >nul 2>&1 && echo WerSvc - Stopped and disabled
+sc stop WerSvc >nul 2>&1
+sc config WerSvc start=disabled >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v "Disabled" /t REG_DWORD /d 1 /f >nul 2>&1
+sc stop Spooler >nul 2>&1
+sc config Spooler start=disabled >nul 2>&1
+sc stop MapsBroker >nul 2>&1
+sc config MapsBroker start=disabled >nul 2>&1
+sc stop TabletInputService >nul 2>&1
+sc config TabletInputService start=disabled >nul 2>&1
+sc stop WSearch >nul 2>&1
+sc config WSearch start=disabled >nul 2>&1
+sc stop bits >nul 2>&1
+sc config bits start=disabled >nul 2>&1
+sc stop CDPSvc >nul 2>&1
+sc config CDPSvc start=disabled >nul 2>&1
+sc stop RemoteRegistry >nul 2>&1
+sc config RemoteRegistry start=disabled >nul 2>&1
+sc stop WbioSrvc >nul 2>&1
+sc config WbioSrvc start=disabled >nul 2>&1
+sc stop wisvc >nul 2>&1
+sc config wisvc start=disabled >nul 2>&1
+sc stop WalletService >nul 2>&1
+sc config WalletService start=disabled >nul 2>&1
+sc stop FrameServer >nul 2>&1
+sc config FrameServer start=disabled >nul 2>&1
+sc stop SysMain >nul 2>&1
+sc config SysMain start=disabled >nul 2>&1
+sc stop RetailDemo >nul 2>&1
+sc config RetailDemo start=disabled >nul 2>&1
+sc stop wuauserv >nul 2>&1
+sc config wuauserv start=disabled >nul 2>&1
+sc stop UsoSvc >nul 2>&1
+sc config UsoSvc start=disabled >nul 2>&1
 
 echo -- Disabling Windows Search
 sc stop "wsearch" && sc config "wsearch" start=disabled

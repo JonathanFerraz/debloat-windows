@@ -103,7 +103,7 @@ DISM /Online /Disable-Feature /FeatureName:Recall /NoRestart
 :: ----------------------------
 echo.
 echo [ETAPA 6/8] Aplicando otimizações de sistema...
-call "%~dp0assets\V2\registry_v2.bat"
+call "%~dp0assets\registry.bat"
 call "%~dp0services.bat"
 call "%~dp0assets\telemetry.bat"
 
@@ -125,7 +125,14 @@ powercfg /hibernate off
 :: ----------------------------
 echo.
 echo [ETAPA 8/8] Finalizando otimizações...
-call "%~dp0assets\finish-optimization.bat"
+:: Verifica integridade do sistema
+sfc /scannow
+
+:: Otimiza armazenamento
+defrag C: /O /U
+
+:: Reinicia serviços críticos
+net stop "Windows Audio" & net start "Windows Audio"
 
 :: ----------------------------
 :: Conclusão
