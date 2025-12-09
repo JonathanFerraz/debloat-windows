@@ -10,7 +10,8 @@ $s6 = [char]0x2713; if (gp Registry::HKCR\ms-gamebar NoOpenWith -ea 0) {$s7 = ''
 $cl = ''; $arg = @{6 = 'apply'; 7 = 'restore'; 2 = 'cancel'} ; $f0 = ($env:0,"$pwd\.pasted")[!$env:0]
 foreach ($a in $arg.Values) {if ("$(split-path $f0 -leaf) $env:1" -like "*$a*") {$cl = $a} }
 if ($cl -eq '') {
-  $choice = (new-object -ComObject Wscript.Shell).Popup("Yes to apply $s6  -  No to restore $s7", 0, $id, 0x1043)
+  $msg = "Yes: Disable Xbox popup when pressing the controller button." + [char]13 + [char]10 + "No: Restore default."
+  $choice = (new-object -ComObject Wscript.Shell).Popup($msg, 0, $id, 0x1043)
   $cl = $arg[$choice]; $env:1 = $cl; if ($cl -eq 'cancel') {return}
 }
 
