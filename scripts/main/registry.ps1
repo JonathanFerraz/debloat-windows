@@ -368,7 +368,7 @@ foreach ($Path in $NetworkRegistrySettings.Keys) {
 
 # Disable network throttling
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type "REG_DWORD" -Value 0xffffffff -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 0 -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 1 -Force
 
 # Input device optimizations
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" -Name "KeyboardDataQueueSize" -Type "REG_DWORD" -Value 30 -Force
@@ -389,9 +389,19 @@ Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_HonorUserF
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0 -Force
 
 # GPU scheduling
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 0x00000002 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DisableMultiplaneOverlay" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "Attributes" -Type "REG_DWORD" -Value 1 -Force
+
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "FrameQueueLimit" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DxgKrnlLatencyPolicy" -Type "REG_DWORD" -Value 2 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "VulkanPreQueueCount" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "GpuComputeStallPolicy" -Type "REG_DWORD" -Value 1 -Force
+
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler" -Name "EnablePreemptiveSubmit" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler" -Name "AsyncQueueDelay" -Type "REG_DWORD" -Value 0 -Force
+
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\amdkmdag" -Name "PP_DisablePowerGating" -Type "REG_DWORD" -Value 1 -Force
 
 # Game performance profile
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Affinity" -Type "REG_DWORD" -Value 0x00000000 -Force
@@ -539,6 +549,8 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSetti
 
 # System multimedia profile timer resolution
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "TimerResolution" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "GlobalTimerResolutionRequests" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "IgnoreTimerResolutionRequests" -Type "REG_DWORD" -Value 0 -Force
 
 # Virtual memory configuration
 Write-Host "Configuring virtual memory..." -ForegroundColor Yellow
