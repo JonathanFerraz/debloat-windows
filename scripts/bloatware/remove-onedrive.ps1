@@ -1,6 +1,6 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
@@ -8,7 +8,7 @@
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 Write-Host ""

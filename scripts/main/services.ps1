@@ -1,18 +1,29 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
 
+[CmdletBinding()]
+param(
+    [switch]$DisableXboxLoginFeatures,
+    [switch]$SkipBackup
+)
+
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
+# Import shared module
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
+
 # Backup services before making changes
-& "$PSScriptRoot\..\backup\services-backup.ps1"
+if (-not $SkipBackup) {
+    & "$PSScriptRoot\..\backup\services-backup.ps1"
+}
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
@@ -30,11 +41,6 @@ $ServicesToStopAndDisable = @(
     "AssignedAccessManagerSvc",
     "AsusUpdateCheck",
     "BDESVC",
-    "BITS",
-    # "BTAGService",
-    # "bthserv",
-    # "BthAvctpSvc",
-    # "CDPSvc",
     "CertPropSvc",
     "CscService",
     "DiagTrack",
@@ -80,7 +86,6 @@ $ServicesToStopAndDisable = @(
     "tzautoupdate",
     "UevAgentService",
     "UmRdpService",
-    "UsoSvc",
     "WalletService",
     "WbioSrvc",
     "WdiServiceHost",
@@ -89,8 +94,7 @@ $ServicesToStopAndDisable = @(
     "wisvc",
     "workfolderssvc",
     "WpcMonSvc",
-    "WSearch",
-    "wuauserv"
+    "WSearch"
 )
 
 # List of service names to set to 'Manual' (Demand) startup type
@@ -236,46 +240,83 @@ $ServicesToSetManual = @(
     "wudfsvc"
 )
 
+# Helper: resolve service names, including per-user services (Name_XXXX pattern)
+function Resolve-ServiceObjects {
+    param([string]$ServiceName)
+
+    $resolved = @()
+
+    $exact = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($exact) {
+        $resolved += $exact
+    }
+    else {
+        $resolved += Get-Service -Name "$ServiceName`_*" -ErrorAction SilentlyContinue
+    }
+
+    return $resolved | Sort-Object -Property Name -Unique
+}
+
 # Section 1: Stop and Disable Services
 
 Write-Host "Starting service stop and disable process..."
 Write-Host "---------------------------------------------------------"
 
-foreach ($serviceName in $ServicesToStopAndDisable) {
-    try {
-        # Attempt to get the service
-        $service = Get-Service -Name $serviceName -ErrorAction Stop
-
-        Write-Host "Processing '$($service.DisplayName)' (Service Name: $serviceName)..."
-
-        # 1. Stop the service
-        if ($service.Status -eq "Running") {
-            Write-Host "  Stopping the service..." -NoNewline
-            Stop-Service -InputObject $service -Force -ErrorAction Stop
-            Write-Host " Done."
-        }
-        else {
-            Write-Host "  Service is already stopped."
-        }
-
-        # 2. Disable the service
-        if ($service.StartType -ne "Disabled") {
-            Write-Host "  Disabling the service..." -NoNewline
-            Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
-            Write-Host " Done."
-        }
-        else {
-            Write-Host "  Service is already disabled."
-        }
-
-        Write-Host "  '$($service.DisplayName)' - Stopped and disabled successfully."
-        Write-Host "" # Blank line for better readability
-
+foreach ($serviceName in ($ServicesToStopAndDisable | Select-Object -Unique)) {
+    $services = Resolve-ServiceObjects -ServiceName $serviceName
+    if (-not $services) {
+        Write-Host "Skipping '$serviceName' (service not found on this system)." -ForegroundColor DarkYellow
+        Write-Host ""
+        continue
     }
-    catch {
-        Write-Warning "  Error processing '$serviceName' for stop/disable: $($_.Exception.Message)"
-        Write-Warning "  The service might not exist or you might not have permissions."
-        Write-Host "" # Blank line for better readability
+
+    foreach ($service in $services) {
+        try {
+            Write-Host "Processing '$($service.DisplayName)' (Service Name: $($service.Name))..."
+
+            # 1. Disable the service FIRST (so it won't restart)
+            if ($service.StartType -ne "Disabled") {
+                Write-Host "  Disabling the service..." -NoNewline
+                Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
+                Write-Host " Done."
+            }
+            else {
+                Write-Host "  Service is already disabled."
+            }
+
+            # 2. Stop the service with timeout (max 10 seconds)
+            if ($service.Status -eq "Running") {
+                Write-Host "  Stopping the service (timeout 10s)..." -NoNewline
+                $stopJob = Start-Job -ScriptBlock {
+                    param($svcName)
+                    Stop-Service -Name $svcName -Force -ErrorAction SilentlyContinue
+                } -ArgumentList $service.Name
+                $completed = Wait-Job $stopJob -Timeout 10
+                if ($completed) {
+                    Receive-Job $stopJob -ErrorAction SilentlyContinue | Out-Null
+                    Write-Host " Done."
+                } else {
+                    Stop-Job $stopJob -ErrorAction SilentlyContinue
+                    # Fallback: try taskkill
+                    $svcPID = (Get-CimInstance Win32_Service -Filter "Name='$($service.Name)'" -ErrorAction SilentlyContinue).ProcessId
+                    if ($svcPID -and $svcPID -ne 0) {
+                        taskkill /F /PID $svcPID 2>$null | Out-Null
+                    }
+                    Write-Host " Timed out (will stop on reboot)."
+                }
+                Remove-Job $stopJob -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                Write-Host "  Service is already stopped."
+            }
+
+            Write-Host "  '$($service.DisplayName)' - Processed successfully."
+            Write-Host ""
+        }
+        catch {
+            Write-Warning "  Error processing '$($service.Name)' for stop/disable: $($_.Exception.Message)"
+            Write-Host ""
+        }
     }
 }
 
@@ -288,35 +329,105 @@ Write-Host "" # Blank line to separate sections
 Write-Host "Starting process to set services to Manual (Demand) Startup Type..."
 Write-Host "-----------------------------------------------------------------------------------"
 
-foreach ($serviceName in $ServicesToSetManual) {
-    try {
-        # Attempt to get the service
-        $service = Get-Service -Name $serviceName -ErrorAction Stop
-
-        Write-Host "Configuring '$($service.DisplayName)' (Service Name: $serviceName)..."
-
-        # Check if the startup type is already 'Manual' (Demand)
-        if ($service.StartType -ne "Manual") {
-            # Note: If the service is running, it won't be stopped automatically when changing to manual,
-            # but it won't start on the next system boot.
-            Write-Host "  Setting startup type to 'Manual'..." -NoNewline
-            Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
-            Write-Host " Done."
-        }
-        else {
-            Write-Host "  Service is already configured for 'Manual'."
-        }
-
-        Write-Host "  '$($service.DisplayName)' - Startup type set to 'Manual'."
-        Write-Host "" # Blank line for better readability
-
+foreach ($serviceName in ($ServicesToSetManual | Select-Object -Unique)) {
+    $services = Resolve-ServiceObjects -ServiceName $serviceName
+    if (-not $services) {
+        Write-Host "Skipping '$serviceName' (service not found on this system)." -ForegroundColor DarkYellow
+        Write-Host ""
+        continue
     }
-    catch {
-        Write-Warning "  Error processing '$serviceName' for 'Manual' startup type: $($_.Exception.Message)"
-        Write-Warning "  The service might not exist or you might not have permissions."
-        Write-Host "" # Blank line for better readability
+
+    foreach ($service in $services) {
+        try {
+            Write-Host "Configuring '$($service.DisplayName)' (Service Name: $($service.Name))..."
+
+            # Check if the startup type is already 'Manual' (Demand)
+            if ($service.StartType -ne "Manual") {
+                # Note: If the service is running, it won't be stopped automatically when changing to manual,
+                # but it won't start on the next system boot.
+                Write-Host "  Setting startup type to 'Manual'..." -NoNewline
+                Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
+                Write-Host " Done."
+            }
+            else {
+                Write-Host "  Service is already configured for 'Manual'."
+            }
+
+            Write-Host "  '$($service.DisplayName)' - Startup type set to 'Manual'."
+            Write-Host ""
+        }
+        catch {
+            Write-Warning "  Error processing '$($service.Name)' for 'Manual' startup type: $($_.Exception.Message)"
+            Write-Host ""
+        }
     }
 }
 
 Write-Host "-----------------------------------------------------------------------------------"
 Write-Host "Service configuration to Manual (Demand) Startup Type completed."
+
+# Section 3: Xbox login profile
+
+Write-Host ""
+
+if ($DisableXboxLoginFeatures) {
+    Write-Host "Applying Xbox login debloat service profile..." -ForegroundColor Yellow
+
+    $XboxServicesToDisable = @(
+        "XblAuthManager",
+        "XblGameSave",
+        "XboxNetApiSvc",
+        "GamingServices",
+        "GamingServicesNet"
+    )
+
+    foreach ($serviceName in $XboxServicesToDisable) {
+        try {
+            $svc = Get-Service -Name $serviceName -ErrorAction Stop
+            if ($svc.Status -eq "Running") {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+            }
+            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+            Write-Host "  '$serviceName' configured as 'Disabled'." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "  '$serviceName' not found on this system. Skipping." -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "Xbox login debloat profile applied." -ForegroundColor Yellow
+}
+else {
+    Write-Host "Applying Xbox/Microsoft sign-in compatibility service profile..." -ForegroundColor Cyan
+
+    $CriticalAuthServices = @(
+        @{ Name = "AppXSVC"; StartupType = "Manual"; StartNow = $false },
+        @{ Name = "ClipSVC"; StartupType = "Manual"; StartNow = $true },
+        @{ Name = "wlidsvc"; StartupType = "Manual"; StartNow = $true },
+        @{ Name = "TokenBroker"; StartupType = "Manual"; StartNow = $false },
+        @{ Name = "InstallService"; StartupType = "Manual"; StartNow = $false },
+        @{ Name = "XblAuthManager"; StartupType = "Manual"; StartNow = $true },
+        @{ Name = "XblGameSave"; StartupType = "Manual"; StartNow = $true },
+        @{ Name = "XboxNetApiSvc"; StartupType = "Manual"; StartNow = $true },
+        @{ Name = "GamingServices"; StartupType = "Automatic"; StartNow = $true },
+        @{ Name = "GamingServicesNet"; StartupType = "Manual"; StartNow = $true }
+    )
+
+    foreach ($entry in $CriticalAuthServices) {
+        try {
+            $svc = Get-Service -Name $entry.Name -ErrorAction Stop
+            Set-Service -Name $entry.Name -StartupType $entry.StartupType -ErrorAction Stop
+
+            if ($entry.StartNow -and $svc.Status -ne "Running") {
+                Start-Service -Name $entry.Name -ErrorAction SilentlyContinue
+            }
+
+            Write-Host "  '$($entry.Name)' configured as '$($entry.StartupType)'." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "  '$($entry.Name)' not found on this system. Skipping." -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "Xbox/Microsoft sign-in compatibility profile applied." -ForegroundColor Cyan
+}

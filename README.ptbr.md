@@ -24,6 +24,7 @@ Um script em PowerShell poderoso e personalizável, desenvolvido para **remover 
 - **Remoção de Aplicativos**
   - Desinstala apps internos desnecessários
   - Remove OneDrive, Edge e outros bloatwares pré-instalados
+  - Modo opcional para debloat de login Xbox (escolha entre manter ou desativar compatibilidade de login)
 
 - **Otimização de Rede**
   - Ajusta a pilha TCP/IP para menor latência
@@ -74,7 +75,29 @@ Para reduzir ainda mais a latência e melhorar o desempenho em jogos, desative o
 2. **Execute como Administrador**  
    Clique com o botão direito no arquivo `debloat.ps1` e selecione **"Executar como administrador"**.
 
-3. **Reinicie o Sistema**  
+3. **Escolha o Modo de Login Xbox**
+
+- O script pergunta se você deseja desabilitar recursos relacionados ao login do Xbox.
+- Se escolher **Sim**, componentes de login Xbox/Microsoft podem ser removidos/desativados.
+- Se escolher **Não**, a compatibilidade com login Xbox é preservada.
+
+4. **Opcional (modo por parâmetro)**
+
+- Execute com `-DisableXboxLoginFeatures` para forçar o debloat de login Xbox sem prompt.
+
+5. **Opcional (scripts pós-debloat para alternar Xbox/Store)**
+
+- Reativar compatibilidade Microsoft Store / Xbox: [scripts/fixes/restore-xbox-store.ps1](scripts/fixes/restore-xbox-store.ps1) — re-aplica serviços e ajustes de registro e tenta re-registrar pacotes da Store/Xbox.
+- Reparar login Xbox (alternativa): [scripts/fixes/repair-xbox-login.ps1](scripts/fixes/repair-xbox-login.ps1) — limpa o arquivo hosts e corrige serviços/registro relacionados ao login Xbox.
+- Desativar compatibilidade Microsoft Store / Xbox: [scripts/fixes/disable-xbox-store-features.ps1](scripts/fixes/disable-xbox-store-features.ps1) — define AppPrivacy para negar acesso, adiciona bloqueio em `login.live.com` no hosts e desabilita serviços Xbox.
+- Remover pacotes do Xbox (opcional): execute `scripts\bloatware\remove-apps.ps1 -RemoveXboxComponents` para remover pacotes Appx relacionados ao Xbox.
+
+6. **Opcional (scripts de debloat pós-instalação por GPU)**
+
+- AMD: `scripts\\bloatware\\radeon-software-post-install-debloat.ps1`
+- NVIDIA: `scripts\\bloatware\\nvidia-software-post-install-debloat.ps1`
+
+7. **Reinicie o Sistema**  
    Reinicie o Windows para aplicar completamente as alterações.
 
 ---

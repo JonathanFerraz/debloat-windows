@@ -1,9 +1,17 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
+
+[CmdletBinding()]
+param(
+    [switch]$SkipBackup
+)
+
+# Import shared module
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
 
 # Set execution policy and error handling
 Set-StrictMode -Version Latest
@@ -64,6 +72,23 @@ function Remove-RegistryItem {
     }
 }
 
+# Ensure script is running as Administrator
+function Assert-Admin {
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
+        Write-Error 'This script requires Administrator privileges.'
+        throw 'Administrator required'
+    }
+}
+
+# Backup helper that calls backup script if present
+function Backup-RegistryIfScriptExists {
+    param([string]$CallerScriptRoot)
+    $backupScript = Join-Path $CallerScriptRoot '..\backup\registry-backup.ps1'
+    if (Test-Path $backupScript) {
+        try { & $backupScript } catch { Write-Warning "Registry backup script failed: $($_.Exception.Message)" }
+    }
+}
+
 # Function to execute bcdedit commands with error handling
 function Invoke-BcdEdit {
     param([string]$Arguments)
@@ -101,11 +126,13 @@ function Set-ScheduledTaskState {
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 # Backup registry before making changes
-& "$PSScriptRoot\..\backup\registry-backup.ps1"
+if (-not $SkipBackup) {
+    & "$PSScriptRoot\..\backup\registry-backup.ps1"
+}
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
@@ -158,9 +185,9 @@ Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Content
 Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338393Enabled" -Type "REG_DWORD" -Value 0 -Force
 
-# Windows Update policy
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "DoNotCompress" -Type "REG_DWORD" -Value 1 -Force
+# Windows Update policy (comentado para não executar)
+# Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Type "REG_DWORD" -Value 1 -Force
+# Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "DoNotCompress" -Type "REG_DWORD" -Value 1 -Force
 
 # Windows Error Reporting
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting" -Name "disabled" -Type "REG_DWORD" -Value 1 -Force
@@ -290,11 +317,11 @@ if ($ActiveInterface) {
         Write-Warning "Failed to configure MTU"
     } 
     
-    # Configure DNS to Cloudflare
+    # Configure DNS to Google
     try {
-        & netsh interface ip set dns name="$InterfaceName" source=static addr=1.1.1.1 register=PRIMARY 2>$null
-        & netsh interface ip add dns name="$InterfaceName" addr=1.0.0.1 index=2 2>$null
-        Write-Host "  ✓ DNS configured to Cloudflare (1.1.1.1, 1.0.0.1)" -ForegroundColor Green
+        & netsh interface ip set dns name="$InterfaceName" source=static addr=8.8.8.8 register=PRIMARY 2>$null
+        & netsh interface ip add dns name="$InterfaceName" addr=8.8.4.4 index=2 2>$null
+        Write-Host "  ✓ DNS configured to Google (8.8.8.8, 8.8.4.4)" -ForegroundColor Green
     }
     catch {
         Write-Warning "Failed to configure DNS"
@@ -321,7 +348,7 @@ $NetworkRegistrySettings = @{
         "TcpMaxHalfOpenRetried" = @("REG_DWORD", 80)
         "TcpMaxPortsExhausted"  = @("REG_DWORD", 5)
         "TcpNumConnections"     = @("REG_DWORD", 500)
-        "EnableECN"             = @("REG_DWORD", 1)
+        "EnableECN"             = @("REG_DWORD", 0)
         "TcpAckFrequency"       = @("REG_DWORD", 1)
         "TCPNoDelay"            = @("REG_DWORD", 1)
         "TcpTimedWaitDelay"     = @("REG_DWORD", 30)
@@ -329,9 +356,7 @@ $NetworkRegistrySettings = @{
         "EnablePMTUDiscovery"   = @("REG_DWORD", 1)
         "EnablePMTUBHDetect"    = @("REG_DWORD", 0)
         "SackOpts"              = @("REG_DWORD", 1)
-        "DisableTaskOffload"    = @("REG_DWORD", 1)
         "EnableTCPChimney"      = @("REG_DWORD", 0)
-        "EnableRSS"             = @("REG_DWORD", 0)
         "EnableTCPA"            = @("REG_DWORD", 0)
     }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched"                     = @{
@@ -366,9 +391,9 @@ foreach ($Path in $NetworkRegistrySettings.Keys) {
     }
 }
 
-# Disable network throttling
+# Disable network throttling and optimize MMCSS
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type "REG_DWORD" -Value 0xffffffff -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 0 -Force
 
 # Input device optimizations
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" -Name "KeyboardDataQueueSize" -Type "REG_DWORD" -Value 30 -Force
@@ -532,8 +557,8 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "IoPageLockLimit" -Type "REG_DWORD" -Value 4194304 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type "REG_DWORD" -Value 0x00000003 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeaturesSettingsOverrideMask" -Type "REG_DWORD" -Value 0x00000003 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpywar" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverrideMask" -Type "REG_DWORD" -Value 0x00000003 -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Type "REG_DWORD" -Value 1 -Force
 
 # CPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type "REG_DWORD" -Value 0x00000026 -Force
@@ -570,13 +595,8 @@ catch {
 Write-Host ""
 Write-Host "[7/10] Optimizing storage performance..." -ForegroundColor Cyan
 
-# Disable NTFS last access time based on drive type
-if ($DriveType -like "*Fixed*") {
-    Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" -Type "REG_DWORD" -Value 0 -Force
-}
-else {
-    Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" -Type "REG_DWORD" -Value 1 -Force
-}
+# Disable NTFS last access update
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" -Type "REG_DWORD" -Value 1 -Force
 
 # Disable defragmentation for SSDs
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction" -Name "Enable" -Type "REG_SZ" -Value "N" -Force
@@ -584,9 +604,6 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction" -Na
 # Optimize NTFS memory usage
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NTFSDisable8dot3NameCreation" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsMemoryUsage" -Type "REG_DWORD" -Value 2 -Force
-
-# Force disable NTFS last access update (override previous conditional logic)
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" -Type "REG_DWORD" -Value 1 -Force
 
 # Minimize DPC Latency
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DisableThrottle" -Type "REG_DWORD" -Value 1 -Force
@@ -651,7 +668,6 @@ Write-Host "Configuring BCDEdit settings..." -ForegroundColor Yellow
 $BCDEditCommands = @(
     "/set bootux disabled",
     "/set tscsyncpolicy enhanced",
-    "/set uselegacyapicmode No",
     "/deletevalue useplatformclock",
     "/deletevalue useplatformtick",
     "/set disabledynamictick No",
@@ -705,7 +721,7 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSetti
 
 # Processor power management settings
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028" -Name "ACSettingIndex" -Type "REG_DWORD" -Value 100 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4ff1-9b6d-eb1059334028" -Name "DCSettingIndex" -Type "REG_DWORD" -Value 100 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028" -Name "DCSettingIndex" -Type "REG_DWORD" -Value 100 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Attributes" -Type "REG_DWORD" -Value 2 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Affinity" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Background Only" -Type "REG_SZ" -Value "False" -Force
@@ -737,10 +753,10 @@ $MouseSettings = @{
         "Flags" = @("REG_SZ", "0")
     }
     "HKCU:\Control Panel\Accessibility\StickyKeys"        = @{
-        "Flags" = @("REG_SZ", "0")
+        "Flags" = @("REG_SZ", "506")
     }
     "HKCU:\Control Panel\Accessibility\ToggleKeys"        = @{
-        "Flags" = @("REG_SZ", "0")
+        "Flags" = @("REG_SZ", "58")
     }
 }
 
@@ -789,8 +805,7 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sche
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "WaitToKillServiceTimeout" -Type "REG_DWORD" -Value 0x000007d0 -Force
 Set-RegistryValue -Path "HKCU:\Control Panel\Keyboard" -Name "InitialKeyboardIndicators" -Type "REG_SZ" -Value "0" -Force
 
-# Fix duplicate StickyKeys entry (this was a duplicate from the mouse section)
-Set-RegistryValue -Path "HKCU:\Control Panel\Accessibility\StickyKeys" -Name "Flags" -Type "REG_SZ" -Value "58" -Force
+# Accessibility keys fully disabled (StickyKeys=506, ToggleKeys=58 disables all popups and shortcuts)
 
 # Advanced power and latency settings
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "ExitLatency" -Type "REG_DWORD" -Value 1 -Force
@@ -828,9 +843,12 @@ Write-Host "- Power management tweaks" -ForegroundColor White
 Write-Host "- Mouse and accessibility settings" -ForegroundColor White
 Write-Host "- Copilot and modern Windows features disabled" -ForegroundColor White
 Write-Host ""
-Write-Host "Registry backups created:" -ForegroundColor Yellow
-Write-Host "- $BackupPathHKLM" -ForegroundColor White
-Write-Host "- $BackupPathHKCU" -ForegroundColor White
+# Show backup location
+$latestBackup = Get-ChildItem "C:\Ryzen Optimizer\Backup\registry-*" -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($latestBackup) {
+    Write-Host "Registry backup location:" -ForegroundColor Yellow
+    Write-Host "- $($latestBackup.FullName)" -ForegroundColor White
+}
 Write-Host ""
 Write-Host "IMPORTANT: A system restart is recommended to apply all changes!" -ForegroundColor Red
 Write-Host ""

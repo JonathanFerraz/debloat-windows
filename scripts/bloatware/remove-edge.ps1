@@ -1,6 +1,6 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
@@ -8,7 +8,7 @@
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 Write-Host ""
@@ -16,11 +16,7 @@ Write-Host "==============================================" -ForegroundColor Gre
 Write-Host "            REMOVE MICROSOFT EDGE             " -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green
 
-# Administrator rights check
-if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Warning "This script must be run with administrator rights!"
-    Break
-}
+
 
 Write-Host "Starting Microsoft Edge uninstallation process..." -ForegroundColor Yellow
 
@@ -47,9 +43,23 @@ $edgeApps = @(
 )
 
 foreach ($app in $edgeApps) {
-    Get-AppxPackage -Name "*$app*" -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-    Get-AppxPackage -Name "*$app*" | Remove-AppxPackage -ErrorAction SilentlyContinue
-    Get-AppxProvisionedPackage -Online | Where-Object DisplayName -like "*$app*" | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+    try {
+        Get-AppxPackage -Name "*$app*" -AllUsers 2>$null | ForEach-Object {
+            try { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue 2>$null }
+            catch { Write-Host "  Skipping (system app): $($_.Name)" -ForegroundColor DarkGray }
+        }
+    } catch { }
+    try {
+        Get-AppxPackage -Name "*$app*" 2>$null | ForEach-Object {
+            try { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue 2>$null }
+            catch { }
+        }
+    } catch { }
+    try {
+        Get-AppxProvisionedPackage -Online 2>$null | Where-Object DisplayName -like "*$app*" | ForEach-Object {
+            Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue 2>$null
+        }
+    } catch { }
 }
 
 # Clean Edge folders

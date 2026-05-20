@@ -1,6 +1,6 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
@@ -11,7 +11,9 @@ param(
     [switch]$SkipNvidia,
     [switch]$SkipVS,
     [switch]$SkipOffice,
-    [switch]$SkipApps
+    [switch]$SkipApps,
+    [switch]$DisableXboxLoginFeatures,
+    [switch]$SkipBackup
 )
 
 #================================================================================
@@ -21,23 +23,23 @@ param(
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
+# Import shared module
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
+
 # Backup telemetry before making changes
-& "$PSScriptRoot\..\backup\telemetry-backup.ps1"
+if (-not $SkipBackup) {
+    & "$PSScriptRoot\..\backup\telemetry-backup.ps1"
+}
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
 Write-Host "                REMOVE TELEMETRY              " -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green
 
-# Check for Administrator privileges
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Warning "This script must be run as Administrator. Please right-click the script and select 'Run with PowerShell (Admin)'."
-    Start-Sleep -Seconds 10
-    exit
-}
+
 
 Write-Host "Starting comprehensive privacy tweaks and telemetry disabling..." -ForegroundColor Yellow
 Write-Host "Script will run with the following sections skipped: " -ForegroundColor Yellow
@@ -46,6 +48,7 @@ if ($SkipNvidia) { Write-Host "- NVIDIA" -ForegroundColor Red }
 if ($SkipVS) { Write-Host "- Visual Studio" -ForegroundColor Red }
 if ($SkipOffice) { Write-Host "- Microsoft Office" -ForegroundColor Red }
 if ($SkipApps) { Write-Host "- Other Applications" -ForegroundColor Red }
+if ($DisableXboxLoginFeatures) { Write-Host "- Xbox Login Features" -ForegroundColor Red }
 
 # Global counters for summary
 $global:regChanges = 0
@@ -155,8 +158,20 @@ if (-not $SkipHostsFile) {
     $adobeUrl = "https://a.dove.isdumb.one/list.txt"
     try {
         Invoke-WebRequest -Uri $adobeUrl -OutFile $downloadedList -UseBasicParsing
-        Get-Content $downloadedList | Add-Content -Path $hostsPath
-        Write-Host "Adobe blocklist entries successfully added."
+        $adobeContent = Get-Content $downloadedList -Raw
+        $adobeWriteOk = $false
+        for ($a = 1; $a -le 3; $a++) {
+            try {
+                $adobeContent | Add-Content -Path $hostsPath -ErrorAction Stop
+                $adobeWriteOk = $true
+                break
+            } catch { Start-Sleep -Seconds 2 }
+        }
+        if ($adobeWriteOk) {
+            Write-Host "Adobe blocklist entries successfully added."
+        } else {
+            Write-Warning "Could not write Adobe blocklist to hosts file (file locked)."
+        }
     }
     catch { Write-Error "Failed to download the Adobe blocklist. Error: $($_.Exception.Message)" }
     finally { if (Test-Path -Path $downloadedList) { Remove-Item -Path $downloadedList -Force } }
@@ -179,11 +194,38 @@ if (-not $SkipHostsFile) {
 0.0.0.0 statsfe1.ws.microsoft.com
 0.0.0.0 telemetry.urs.microsoft.com
 0.0.0.0 settings.data.microsoft.com
-0.0.0.0 login.live.com
 0.0.0.0 api.amp.azure.com
 "@
-    $telemetryDomains | Add-Content -Path $hostsPath
-    Write-Host "Common telemetry domains added to hosts file."
+    if ($DisableXboxLoginFeatures) {
+        $telemetryDomains += "`n0.0.0.0 login.live.com"
+    }
+    # Helper: write to hosts file with retry and .NET fallback
+    $hostsWriteSuccess = $false
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $telemetryDomains | Add-Content -Path $hostsPath -ErrorAction Stop
+            $hostsWriteSuccess = $true
+            break
+        } catch {
+            Write-Host "  Hosts file locked (attempt $attempt/3), retrying..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+        }
+    }
+    if (-not $hostsWriteSuccess) {
+        # .NET fallback: open file with sharing
+        try {
+            $stream = [System.IO.File]::Open($hostsPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $writer = New-Object System.IO.StreamWriter($stream)
+            $writer.Write($telemetryDomains)
+            $writer.Close()
+            $stream.Close()
+            Write-Host "  Telemetry domains added via .NET fallback." -ForegroundColor Green
+        } catch {
+            Write-Warning "  Could not write to hosts file after all attempts: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Host "Common telemetry domains added to hosts file."
+    }
 }
 #endregion
 
@@ -303,8 +345,8 @@ Write-Host "Applying Windows OS Tweaks..."
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDesktopAnalyticsProcessing" 0
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDeviceNameInTelemetry" 0
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "MicrosoftEdgeDataOptIn" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowWUfBCloudProcessing" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowUpdateComplianceProcessing" 0
+# Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowWUfBCloudProcessing" 0
+# Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowUpdateComplianceProcessing" 0
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowCommercialDataPipeline" 0
 Set-RegistryValue "HKLM:\Software\Policies\Microsoft\SQMClient\Windows" "CEIPEnable" 0
 Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "AllowTelemetry" 0
@@ -331,7 +373,7 @@ Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" "DisableMFU
 Set-RegistryValue "HKCU:\Control Panel\International\User Profile" "HttpAcceptLanguageOptOut" 1
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "PublishUserActivities" 0
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "UploadUserActivities" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessAccountInfo" 2
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessAccountInfo" $(if ($DisableXboxLoginFeatures) { 2 } else { 1 })
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCalendar" 2
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCallHistory" 2
 Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCamera" 2

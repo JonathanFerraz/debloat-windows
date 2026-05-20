@@ -135,14 +135,18 @@ $tasksToBackup = @(
     "\NvTmRepOnLogon_{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8}"
 )
 foreach ($taskPath in $tasksToBackup) {
-    $task = Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue
+    $taskName = Split-Path -Path $taskPath -Leaf
+    $taskPathOnly = $taskPath.Substring(0, $taskPath.Length - $taskName.Length)
+    if ([string]::IsNullOrWhiteSpace($taskPathOnly)) { $taskPathOnly = "\" }
+
+    $task = Get-ScheduledTask -TaskPath $taskPathOnly -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task) {
         $taskBackupData += [PSCustomObject]@{
-            Path  = $task.TaskPath
-            Name  = $task.TaskName
+            Path  = $taskPathOnly
+            Name  = $taskName
             State = $task.State
         }
-        Write-Verbose "Backed up task: $($task.TaskPath)"
+        Write-Verbose "Backed up task: $taskPathOnly$taskName"
     }
 }
 Write-Host "Found and backed up $($taskBackupData.Count) scheduled tasks."

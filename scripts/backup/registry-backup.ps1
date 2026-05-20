@@ -127,12 +127,16 @@ $tasksToManage = @(
     "\Microsoft\Windows\Customer Experience Improvement Program\BthSQM",
     "\Microsoft\Windows\Customer Experience Improvement Program\Uploader"
 )
-foreach ($taskName in $tasksToManage) {
-    # The original script uses -TaskName, which can be ambiguous. We'll try it first, then by path.
-    $task = Get-ScheduledTask -TaskName ($taskName.Split('\')[-1]) -ErrorAction SilentlyContinue
+foreach ($taskRef in $tasksToManage) {
+    $taskName = Split-Path -Path $taskRef -Leaf
+    $taskPath = $taskRef.Substring(0, $taskRef.Length - $taskName.Length)
+    if ([string]::IsNullOrWhiteSpace($taskPath)) { $taskPath = "\" }
+
+    $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task) {
         $taskBackupData += [PSCustomObject]@{
-            TaskName = $taskName # Use the full path for unambiguous restore
+            TaskPath = $taskPath
+            TaskName = $taskName
             State    = $task.State
         }
     }

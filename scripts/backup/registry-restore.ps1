@@ -68,16 +68,28 @@ if (Test-Path $tasksBackupFile) {
     $tasksToRestore = Import-Csv -Path $tasksBackupFile
     foreach ($taskInfo in $tasksToRestore) {
         try {
+            $taskPath = $taskInfo.TaskPath
+            $taskName = $taskInfo.TaskName
+
+            # Backward compatibility with older backups that stored a full path in TaskName
+            if ([string]::IsNullOrWhiteSpace($taskPath) -and $taskName -like "\*") {
+                $taskName = Split-Path -Path $taskInfo.TaskName -Leaf
+                $taskPath = $taskInfo.TaskName.Substring(0, $taskInfo.TaskName.Length - $taskName.Length)
+                if ([string]::IsNullOrWhiteSpace($taskPath)) { $taskPath = "\" }
+            }
+
+            $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop
+
             if ($taskInfo.State -eq 'Enabled') {
-                Enable-ScheduledTask -TaskName $taskInfo.TaskName
+                $task | Enable-ScheduledTask | Out-Null
             }
             else {
-                Disable-ScheduledTask -TaskName $taskInfo.TaskName
+                $task | Disable-ScheduledTask | Out-Null
             }
-            Write-Host "Task '$($taskInfo.TaskName)' restored to state '$($taskInfo.State)'."
+            Write-Host "Task '$taskPath$taskName' restored to state '$($taskInfo.State)'."
         }
         catch {
-            Write-Warning "Failed to restore task $($taskInfo.TaskName)."
+            Write-Warning "Failed to restore task $($taskInfo.TaskPath)$($taskInfo.TaskName)."
         }
     }
 }

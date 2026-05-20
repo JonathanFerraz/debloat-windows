@@ -1,14 +1,21 @@
 # ==============================================
 # R Y Z Ξ N Optimizer
-# Version: 2.0 | Date: 2025-07-25
+# Version: 3.0 | Date: 2025-07-25
 # ==============================================
 
 #Requires -RunAsAdministrator
 
+[CmdletBinding()]
+param(
+    [switch]$RemoveXboxComponents,
+    [switch]$KeepMicrosoftStore,
+    [switch]$KeepXboxApps
+)
+
 # ----------------------------
 # Initial Setup
 # ----------------------------
-$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v2.0"
+$Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 Write-Host ""
@@ -64,7 +71,6 @@ $packagesToRemove = @(
     'Microsoft.ZuneVideo',
     'Microsoft.WindowsMeetNow',
     'Microsoft.Paint',
-    'Microsoft.XboxGameBar',
     'Microsoft.GetHelp',
     'Microsoft.BingFinance',
     'Microsoft.MicrosoftOfficeHub',
@@ -102,6 +108,30 @@ $packagesToRemove = @(
     'MSTeams',
     'Microsoft.Todos'
 )
+
+if ($RemoveXboxComponents -and -not $KeepXboxApps) {
+    Write-Output "-- Xbox components removal enabled"
+    $packagesToRemove += @(
+        'Microsoft.XboxGameBar',
+        'Microsoft.Xbox.TCUI',
+        'Microsoft.XboxGamingOverlay',
+        'Microsoft.XboxIdentityProvider',
+        'Microsoft.XboxSpeechToTextOverlay',
+        'Microsoft.GamingApp'
+    )
+} elseif ($KeepXboxApps) {
+    Write-Output "-- Xbox apps will be KEPT"
+}
+
+if (-not $KeepMicrosoftStore) {
+    Write-Output "-- Microsoft Store will be REMOVED"
+    $packagesToRemove += @(
+        'Microsoft.WindowsStore',
+        'Microsoft.StorePurchaseApp'
+    )
+} else {
+    Write-Output "-- Microsoft Store will be KEPT"
+}
 
 foreach ($pkg in $packagesToRemove) {
     $appxFound = $false

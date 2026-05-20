@@ -90,14 +90,19 @@ $taskBackupFile = Join-Path $selectedBackupDir "telemetry-tasks-backup.csv"
 if (Test-Path $taskBackupFile) {
     $tasksToRestore = Import-Csv -Path $taskBackupFile
     foreach ($taskInfo in $tasksToRestore) {
-        if ($taskInfo.State -ne 'Disabled') {
-             try {
-                Write-Host "Enabling task: $($taskInfo.Path)"
-                Get-ScheduledTask -TaskPath $taskInfo.Path | Enable-ScheduledTask -ErrorAction Stop
+        try {
+            $task = Get-ScheduledTask -TaskPath $taskInfo.Path -TaskName $taskInfo.Name -ErrorAction Stop
+            if ($taskInfo.State -eq 'Disabled') {
+                $task | Disable-ScheduledTask -ErrorAction Stop
+                Write-Host "Disabled task: $($taskInfo.Path)$($taskInfo.Name)"
             }
-            catch {
-                 Write-Error "Failed to enable task $($taskInfo.Path). Error: $($_.Exception.Message)"
+            else {
+                $task | Enable-ScheduledTask -ErrorAction Stop
+                Write-Host "Enabled task: $($taskInfo.Path)$($taskInfo.Name)"
             }
+        }
+        catch {
+            Write-Error "Failed to restore task $($taskInfo.Path)$($taskInfo.Name). Error: $($_.Exception.Message)"
         }
     }
 } else {
