@@ -7,6 +7,7 @@
 param(
     [switch]$All,
     [switch]$DisableXboxLoginFeatures,
+    [switch]$DisableSystemDevices,
     [switch]$SkipMenu,
     [string]$DnsProvider = ''
 )
@@ -50,21 +51,29 @@ $optionals = [ordered]@{
     'D' = @{ Name = 'Disable Windows Defender RT';  Enabled = $false; Warning = $true }
     'N' = @{ Name = 'Disable Notifications';        Enabled = $false; Warning = $false }
     'M' = @{ Name = 'Disable Spectre Mitigations';  Enabled = $false; Warning = $true }
+    'Y' = @{ Name = 'Disable Selected System Devices'; Enabled = $true; Warning = $true }
 }
 
 # Fix scripts
 $fixes = [ordered]@{
     'F1' = @{ Name = 'Repair Xbox Login';           Script = 'scripts\fixes\repair-xbox-login.ps1' }
     'F2' = @{ Name = 'Restore Xbox + Store';        Script = 'scripts\fixes\restore-xbox-store.ps1' }
+    'F3' = @{ Name = 'Restore System Devices';      Script = 'scripts\backup\devices-restore.ps1' }
 }
 
 # DNS options
-$dnsOptions = @{
-    1 = @{ Name = "Google";    Primary = "8.8.8.8";   Secondary = "8.8.4.4" }
-    2 = @{ Name = "Cloudflare"; Primary = "1.1.1.1";   Secondary = "1.0.0.1" }
-    3 = @{ Name = "Quad9";     Primary = "9.9.9.9";   Secondary = "149.112.112.112" }
+# 1-3: plain resolvers. 4-5: filtering resolvers that block ads/malware at the
+# resolver level (no large hosts file, zero DNS-parse overhead). The hosts file
+# stays small (telemetry only); ads/malware are filtered upstream by the resolver.
+$dnsOptions = [ordered]@{
+    1 = @{ Name = "Google";              Primary = "8.8.8.8";       Secondary = "8.8.4.4" }
+    2 = @{ Name = "Cloudflare";          Primary = "1.1.1.1";       Secondary = "1.0.0.1" }
+    3 = @{ Name = "Quad9 (malware)";     Primary = "9.9.9.9";       Secondary = "149.112.112.112" }
+    4 = @{ Name = "AdGuard (ads+malware)"; Primary = "94.140.14.14"; Secondary = "94.140.15.15" }
+    5 = @{ Name = "Cloudflare (malware)";  Primary = "1.1.1.2";      Secondary = "1.0.0.2" }
 }
-$selectedDns = 1
+# Default: AdGuard filtering resolver (ads + malware) - option 4.
+$selectedDns = 4
 
 # --- Menu Functions ---
 function Show-Banner {
@@ -197,6 +206,10 @@ function Invoke-AllBackups {
         @{ Name = 'Services';  Path = Join-Path $scriptDir 'scripts\backup\services-backup.ps1' }
     )
 
+    if ($optionals.Contains('Y') -and $optionals.Y.Enabled) {
+        $backupScripts += @{ Name = 'System Devices'; Path = Join-Path $scriptDir 'scripts\backup\devices-backup.ps1' }
+    }
+
     foreach ($backup in $backupScripts) {
         if (Test-Path $backup.Path) {
             Write-Host "  Backing up $($backup.Name)..." -ForegroundColor Cyan
@@ -216,6 +229,16 @@ function Invoke-Cleanup {
     if (Test-Path $removeTempPath) { & $removeTempPath }
     Write-Host "Running Disk Cleanup..."
     cleanmgr /verylowdisk
+
+    # Free ~7GB by disabling Reserved Storage.
+    Write-Host "Disabling Reserved Storage..."
+    dism /Online /Set-ReservedStorageState /State:Disabled 2>$null
+
+    # Reclaim space from the component store (superseded update payloads).
+    # /ResetBase prevents uninstalling already-installed updates - acceptable for
+    # a perf-focused setup, but you cannot roll those specific updates back after.
+    Write-Host "Cleaning up component store (WinSxS)... this can take several minutes."
+    dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>$null
 }
 
 function Invoke-Bloatware {
@@ -256,14 +279,23 @@ function Invoke-NetworkOptimization {
     $dns = $dnsOptions[$DnsChoice]
     netsh interface ip set dns name="$ifName" static $($dns.Primary)
     netsh interface ip add dns name="$ifName" $($dns.Secondary) index=2
-    netsh int tcp set global autotuninglevel=disabled
+    # Keep TCP auto-tuning ENABLED: disabling it caps the TCP receive window and
+    # hurts throughput for wireless VR streaming (Quest Air Link / Virtual Desktop).
+    netsh int tcp set global autotuninglevel=normal
     Write-Host "DNS set to $($dns.Name) ($($dns.Primary), $($dns.Secondary))" -ForegroundColor Green
+    if ($DnsChoice -ge 4) {
+        Write-Host "  Ads/malware filtered at the DNS resolver (no hosts-file overhead)." -ForegroundColor DarkCyan
+    }
 }
 
 function Invoke-GamingTweaks {
     Write-Host "`n[STEP 4] Gaming and Registry Tweaks..." -ForegroundColor Green
     $registryPath = Join-Path $scriptDir "scripts\main\registry.ps1"
     if (Test-Path $registryPath) { & $registryPath -SkipBackup }
+
+    # Enable MSI mode on the GPU (reduces DPC latency / micro-stutter).
+    $msiPath = Join-Path $scriptDir "scripts\main\gpu-msi-mode.ps1"
+    if (Test-Path $msiPath) { & $msiPath }
 }
 
 function Invoke-PrivacyTelemetry {
@@ -278,6 +310,11 @@ function Invoke-PowerCPU {
     if (Test-Path $servicesPath) {
         if ($optionals.G.Enabled) { & $servicesPath -DisableXboxLoginFeatures -SkipBackup }
         else { & $servicesPath -SkipBackup }
+    }
+    if ($optionals.Y.Enabled) {
+        $devicesPath = Join-Path $scriptDir "scripts\main\system-devices.ps1"
+        if (Test-Path $devicesPath) { & $devicesPath -SkipBackup }
+        else { Write-Warning "System devices script not found: $devicesPath" }
     }
     Write-Host "Activating Ultimate Performance mode..."
     try {
@@ -453,8 +490,11 @@ function Invoke-SelectedOptimizations {
 # --- CLI Mode ---
 if ($All -or $SkipMenu) {
     if ($DisableXboxLoginFeatures) { $optionals.G.Enabled = $true }
+    if ($DisableSystemDevices) { $optionals.Y.Enabled = $true }
     if ($DnsProvider -match '^(2|cloudflare)$') { $selectedDns = 2 }
     elseif ($DnsProvider -match '^(3|quad9)$') { $selectedDns = 3 }
+    elseif ($DnsProvider -match '^(4|adguard)$') { $selectedDns = 4 }
+    elseif ($DnsProvider -match '^(5|cloudflare-malware|family)$') { $selectedDns = 5 }
     Invoke-SelectedOptimizations
     exit 0
 }
@@ -485,9 +525,17 @@ do {
                 if ($confirm -match '^[YySs]$') { $optionals.M.Enabled = $true }
             } else { $optionals.M.Enabled = $false }
         }
+        'Y' {
+            if (-not $optionals.Y.Enabled) {
+                Write-Host "`n  WARNING: This disables selected System Devices in Device Manager." -ForegroundColor Red
+                Write-Host "  It may affect Hyper-V, RDP redirection, virtual drives, HPET, or composite devices." -ForegroundColor Red
+                $confirm = Read-Host "  Are you sure? (Y/N)"
+                if ($confirm -match '^[YySs]$') { $optionals.Y.Enabled = $true }
+            } else { $optionals.Y.Enabled = $false }
+        }
         'P' {
             $selectedDns++
-            if ($selectedDns -gt 3) { $selectedDns = 1 }
+            if ($selectedDns -gt $dnsOptions.Count) { $selectedDns = 1 }
             Write-Host "  DNS changed to: $($dnsOptions[$selectedDns].Name)" -ForegroundColor Cyan
             Start-Sleep -Milliseconds 500
         }
@@ -515,7 +563,7 @@ do {
             exit 0
         }
         # Fix scripts
-        { $_ -match '^F[12]$' } {
+        { $fixes.Contains($_) } {
             $fixKey = $_
             $fix = $fixes[$fixKey]
             $fixPath = Join-Path $scriptDir $fix.Script

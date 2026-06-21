@@ -154,28 +154,11 @@ function Disable-ScheduledTasksByPath {
 #region --- Hosts File Modification ---
 if (-not $SkipHostsFile) {
     $hostsPath = "$env:windir\System32\drivers\etc\hosts"
-    $downloadedList = Join-Path $env:TEMP "list.txt"
-    $adobeUrl = "https://a.dove.isdumb.one/list.txt"
-    try {
-        Invoke-WebRequest -Uri $adobeUrl -OutFile $downloadedList -UseBasicParsing
-        $adobeContent = Get-Content $downloadedList -Raw
-        $adobeWriteOk = $false
-        for ($a = 1; $a -le 3; $a++) {
-            try {
-                $adobeContent | Add-Content -Path $hostsPath -ErrorAction Stop
-                $adobeWriteOk = $true
-                break
-            } catch { Start-Sleep -Seconds 2 }
-        }
-        if ($adobeWriteOk) {
-            Write-Host "Adobe blocklist entries successfully added."
-        } else {
-            Write-Warning "Could not write Adobe blocklist to hosts file (file locked)."
-        }
-    }
-    catch { Write-Error "Failed to download the Adobe blocklist. Error: $($_.Exception.Message)" }
-    finally { if (Test-Path -Path $downloadedList) { Remove-Item -Path $downloadedList -Force } }
 
+    # SECURITY: no remote download. Previously this section fetched a third-party
+    # list over HTTP and appended it unverified to the hosts file every run
+    # (supply-chain risk + unbounded growth). The blocklist is now a curated,
+    # locally-maintained list, optionally extended by a reviewed local file.
     $telemetryDomains = @"
 0.0.0.0 vortex.data.microsoft.com
 0.0.0.0 settings-win.data.microsoft.com
@@ -199,32 +182,66 @@ if (-not $SkipHostsFile) {
     if ($DisableXboxLoginFeatures) {
         $telemetryDomains += "`n0.0.0.0 login.live.com"
     }
-    # Helper: write to hosts file with retry and .NET fallback
-    $hostsWriteSuccess = $false
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        try {
-            $telemetryDomains | Add-Content -Path $hostsPath -ErrorAction Stop
-            $hostsWriteSuccess = $true
-            break
-        } catch {
-            Write-Host "  Hosts file locked (attempt $attempt/3), retrying..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 2
+
+    # Merge every locally-reviewed blocklist shipped in scripts\data\*.txt
+    # (e.g. adobe-blocklist.txt vendored from a-dove-is-dumb, plus any the user adds).
+    # These are versioned in the repo and reviewed once - no per-run download.
+    $dataDir = Join-Path $PSScriptRoot "..\data"
+    if (Test-Path $dataDir) {
+        foreach ($listFile in (Get-ChildItem -Path $dataDir -Filter '*.txt' -File -ErrorAction SilentlyContinue)) {
+            $extra = Get-Content $listFile.FullName -Raw -ErrorAction SilentlyContinue
+            if ($extra) {
+                $telemetryDomains += "`n$extra"
+                Write-Host "Merged local blocklist: $($listFile.Name)" -ForegroundColor DarkCyan
+            }
         }
     }
-    if (-not $hostsWriteSuccess) {
-        # .NET fallback: open file with sharing
-        try {
-            $stream = [System.IO.File]::Open($hostsPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $writer.Write($telemetryDomains)
-            $writer.Close()
-            $stream.Close()
-            Write-Host "  Telemetry domains added via .NET fallback." -ForegroundColor Green
-        } catch {
-            Write-Warning "  Could not write to hosts file after all attempts: $($_.Exception.Message)"
-        }
+
+    # DEDUPE: only append entries that are not already present in the hosts file.
+    $existingHosts = @()
+    if (Test-Path $hostsPath) {
+        $existingHosts = @(Get-Content $hostsPath -ErrorAction SilentlyContinue | ForEach-Object { $_.Trim() })
+    }
+    $existingSet = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]$existingHosts, [System.StringComparer]::OrdinalIgnoreCase)
+
+    $newLines = @(
+        $telemetryDomains -split "`r?`n" |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and -not $_.StartsWith('#') -and -not $existingSet.Contains($_) } |
+            Select-Object -Unique
+    )
+
+    if ($newLines.Count -eq 0) {
+        Write-Host "Hosts file already up to date (no new telemetry domains to add)." -ForegroundColor Green
     } else {
-        Write-Host "Common telemetry domains added to hosts file."
+        $payload = ($newLines -join "`r`n")
+        $hostsWriteSuccess = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                Add-Content -Path $hostsPath -Value $payload -ErrorAction Stop
+                $hostsWriteSuccess = $true
+                break
+            } catch {
+                Write-Host "  Hosts file locked (attempt $attempt/3), retrying..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
+            }
+        }
+        if (-not $hostsWriteSuccess) {
+            # .NET fallback: open file with sharing
+            try {
+                $stream = [System.IO.File]::Open($hostsPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+                $writer = New-Object System.IO.StreamWriter($stream)
+                $writer.WriteLine($payload)
+                $writer.Close()
+                $stream.Close()
+                Write-Host "  Telemetry domains added via .NET fallback." -ForegroundColor Green
+            } catch {
+                Write-Warning "  Could not write to hosts file after all attempts: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Host "Added $($newLines.Count) new telemetry domain(s) to hosts file." -ForegroundColor Green
+        }
     }
 }
 #endregion

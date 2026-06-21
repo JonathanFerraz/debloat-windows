@@ -1,0 +1,9 @@
+# Locally-reviewed extra hosts blocklist (optional).
+# telemetry.ps1 merges this file into the curated telemetry blocklist and
+# appends only entries not already present in the system hosts file.
+#
+# Add one entry per line, e.g.:
+#   0.0.0.0 some.telemetry.example.com
+#
+# Lines starting with '#' are ignored. Review anything you paste here:
+# entries land directly in C:\Windows\System32\drivers\etc\hosts.

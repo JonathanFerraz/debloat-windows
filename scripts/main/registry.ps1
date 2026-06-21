@@ -291,7 +291,7 @@ if ($ActiveInterface) {
     
     $NetshCommands = @{
         "netsh int tcp set heuristics disabled"                    = "TCP Heuristics disabled"
-        "netsh int tcp set global autotuninglevel=disabled"        = "TCP Auto-tuning disabled"
+        "netsh int tcp set global autotuninglevel=normal"          = "TCP Auto-tuning kept enabled (wireless VR throughput)"
         "netsh int tcp set global congestionprovider=ctcp"         = "Congestion provider set to CTCP"
         "netsh int tcp set global ecncapability=disabled"          = "ECN Capability disabled"
         "netsh int tcp set global chimney=disabled"                = "TCP Chimney disabled"
@@ -317,16 +317,10 @@ if ($ActiveInterface) {
         Write-Warning "Failed to configure MTU"
     } 
     
-    # Configure DNS to Google
-    try {
-        & netsh interface ip set dns name="$InterfaceName" source=static addr=8.8.8.8 register=PRIMARY 2>$null
-        & netsh interface ip add dns name="$InterfaceName" addr=8.8.4.4 index=2 2>$null
-        Write-Host "  ✓ DNS configured to Google (8.8.8.8, 8.8.4.4)" -ForegroundColor Green
-    }
-    catch {
-        Write-Warning "Failed to configure DNS"
-    } 
-    
+    # DNS is intentionally NOT set here: it is configured by the Network step
+    # (Invoke-NetworkOptimization in debloat.ps1) based on the user's menu choice.
+    # Forcing Google here would silently override that selection.
+
     # Interface-specific TCP optimizations
     if ($InterfaceGUID) {
         Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$InterfaceGUID" -Name "TcpAckFrequency" -Type "REG_DWORD" -Value 1 -Force
@@ -552,13 +546,14 @@ Write-Host ""
 Write-Host "[6/10] Optimizing memory and CPU..." -ForegroundColor Cyan
 
 # Memory management
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "IoPageLockLimit" -Type "REG_DWORD" -Value 4194304 -Force
+# NOTE: LargeSystemCache / DisablePagingExecutive / IoPageLockLimit removed -
+#       aggressive, marginal gain, and can cause stutter (file cache competing
+#       with the app/game working set).
+# NOTE: Spectre/Meltdown mitigation override (FeatureSettingsOverride*) removed -
+#       it now lives ONLY behind the gated, confirmed [M] optional in debloat.ps1.
+# NOTE: Windows Defender DisableAntiSpyware removed - it now lives ONLY behind the
+#       gated, confirmed [D] optional in debloat.ps1.
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type "REG_DWORD" -Value 0x00000003 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverrideMask" -Type "REG_DWORD" -Value 0x00000003 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Type "REG_DWORD" -Value 1 -Force
 
 # CPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type "REG_DWORD" -Value 0x00000026 -Force
@@ -610,8 +605,9 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "Cpupriority" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "SerializeTimerExpiration" -Type "REG_DWORD" -Value 1 -Force
 
-# Additional system optimizations
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "SvcHostSplitThresholdInKB" -Type "REG_DWORD" -Value 67108864 -Force
+# NOTE: SvcHostSplitThresholdInKB removed - collapsing all svchost into one
+#       process saves a little RAM but destroys service isolation (robustness
+#       and security cost).
 
 # USB selective suspend disable
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USB" -Name "DisableSelectiveSuspend" -Type "REG_DWORD" -Value 1 -Force
@@ -794,12 +790,17 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Searc
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\ApplicationManagement\AllowGameDVR" -Name "value" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\ApplicationManagement" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" -Name "AppCaptureEnabled" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 0 -Force
+# Game Mode kept ON: modern Windows uses it to prioritize CPU/GPU for the active
+# game and suppress background interruptions (updates, driver installs).
+Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AllowAutoGameMode" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "UseNexusForGameBarEnabled" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "ShowStartupPanel" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Avalon.Graphics" -Name "MaxMultisampleType" -Type "REG_DWORD" -Value 0x00000000 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SysMain" -Name "Start" -Type "REG_DWORD" -Value 0x00000004 -Force
+# SysMain (Superfetch) kept Manual (3), not Disabled (4): lets it assist game
+# asset streaming on demand without auto-starting at boot.
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SysMain" -Name "Start" -Type "REG_DWORD" -Value 0x00000003 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" -Name "SearchOrderConfig" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" -Name "MaintenanceDisabled" -Type "REG_DWORD" -Value 0x00000001 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "WaitToKillServiceTimeout" -Type "REG_DWORD" -Value 0x000007d0 -Force
