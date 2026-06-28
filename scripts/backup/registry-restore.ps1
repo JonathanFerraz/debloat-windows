@@ -105,7 +105,7 @@ if (Test-Path $networkBackupFile) {
     foreach ($netInfo in $networkToRestore) {
         try {
             $dnsServers = $netInfo.DNSServers -split ','
-            Set-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -ServerAddresses ($dnsServers)
+            Set-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -ServerAddresses ($dnsServers) -ErrorAction Stop
             Write-Host "DNS for Interface $($netInfo.InterfaceIndex) restored."
         }
         catch {

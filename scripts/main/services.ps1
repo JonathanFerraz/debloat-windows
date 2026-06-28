@@ -20,6 +20,23 @@ Clear-Host
 # Import shared module
 Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
 
+# Fallback for protected services that block Set-Service even as Admin.
+# Writes Start value directly to registry (takes effect on next service start or reboot).
+function Set-ServiceStartTypeViaRegistry {
+    param(
+        [string]$ServiceName,
+        [ValidateSet('Automatic', 'Manual', 'Disabled')]
+        [string]$StartupType
+    )
+    $map = @{ 'Automatic' = 2; 'Manual' = 3; 'Disabled' = 4 }
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    if (Test-Path $regPath) {
+        Set-ItemProperty -Path $regPath -Name "Start" -Value $map[$StartupType] -Type DWord -Force -ErrorAction Stop
+        return $true
+    }
+    return $false
+}
+
 # Backup services before making changes
 if (-not $SkipBackup) {
     & "$PSScriptRoot\..\backup\services-backup.ps1"
@@ -346,8 +363,14 @@ foreach ($serviceName in ($ServicesToSetManual | Select-Object -Unique)) {
                 # Note: If the service is running, it won't be stopped automatically when changing to manual,
                 # but it won't start on the next system boot.
                 Write-Host "  Setting startup type to 'Manual'..." -NoNewline
-                Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
-                Write-Host " Done."
+                try {
+                    Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
+                    Write-Host " Done."
+                } catch {
+                    # Protected service: SCM blocks Set-Service even as Admin. Fall back to registry.
+                    Set-ServiceStartTypeViaRegistry -ServiceName $service.Name -StartupType Manual -ErrorAction Stop | Out-Null
+                    Write-Host " Done (registry fallback - takes effect on reboot)."
+                }
             }
             else {
                 Write-Host "  Service is already configured for 'Manual'."
@@ -414,19 +437,28 @@ else {
     )
 
     foreach ($entry in $CriticalAuthServices) {
-        try {
-            $svc = Get-Service -Name $entry.Name -ErrorAction Stop
-            Set-Service -Name $entry.Name -StartupType $entry.StartupType -ErrorAction Stop
-
-            if ($entry.StartNow -and $svc.Status -ne "Running") {
-                Start-Service -Name $entry.Name -ErrorAction SilentlyContinue
-            }
-
-            Write-Host "  '$($entry.Name)' configured as '$($entry.StartupType)'." -ForegroundColor Green
-        }
-        catch {
+        $svc = Get-Service -Name $entry.Name -ErrorAction SilentlyContinue
+        if (-not $svc) {
             Write-Host "  '$($entry.Name)' not found on this system. Skipping." -ForegroundColor Yellow
+            continue
         }
+        try {
+            Set-Service -Name $entry.Name -StartupType $entry.StartupType -ErrorAction Stop
+        } catch {
+            # Protected service: fall back to registry
+            try {
+                Set-ServiceStartTypeViaRegistry -ServiceName $entry.Name -StartupType $entry.StartupType -ErrorAction Stop | Out-Null
+            } catch {
+                Write-Warning "  '$($entry.Name)' could not be configured: $($_.Exception.Message)"
+                continue
+            }
+        }
+
+        if ($entry.StartNow -and $svc.Status -ne "Running") {
+            Start-Service -Name $entry.Name -ErrorAction SilentlyContinue
+        }
+
+        Write-Host "  '$($entry.Name)' configured as '$($entry.StartupType)'." -ForegroundColor Green
     }
 
     Write-Host "Xbox/Microsoft sign-in compatibility profile applied." -ForegroundColor Cyan

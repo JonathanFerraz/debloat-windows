@@ -421,6 +421,11 @@ function Invoke-SelectedOptimizations {
     $disableStore = $optionals.S.Enabled
     $disableXbox = $optionals.G.Enabled
 
+    $logDir = Join-Path $scriptDir "logs"
+    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+    $logFile = Join-Path $logDir "optimization_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
+    Start-Transcript -Path $logFile -Force | Out-Null
+
     Write-Host ""
     Write-Host "==============================================" -ForegroundColor Green
     Write-Host "       STARTING OPTIMIZATION PROCESS" -ForegroundColor Green
@@ -480,8 +485,11 @@ function Invoke-SelectedOptimizations {
     Write-Host "  2. Check if all drivers are updated."
     Write-Host "  3. Configure your essential programs."
     Write-Host ""
+    Write-Host "Log file: $logFile" -ForegroundColor DarkCyan
+    Write-Host ""
     Pause
 
+    Stop-Transcript | Out-Null
     Write-Host "Restarting Explorer..."
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer.exe

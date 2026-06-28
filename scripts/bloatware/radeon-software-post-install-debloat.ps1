@@ -33,8 +33,12 @@ else {
 Write-Host "Stopping and Disabling NT Services"
 # AMD User Experience Program Launcher (https://www.amd.com/en/corporate/amd-user-experience)
 if (Get-Service -Name "AUEPLauncher" -ErrorAction SilentlyContinue) {
-    Stop-Service -Name "AUEPLauncher"
-    Set-Service -Name "AUEPLauncher" -StartupType Disabled
+    try {
+        Stop-Service -Name "AUEPLauncher" -ErrorAction Stop
+        Set-Service -Name "AUEPLauncher" -StartupType Disabled -ErrorAction Stop
+    } catch {
+        Write-Warning "Could not stop/disable AUEPLauncher: $($_.Exception.Message)"
+    }
 }
 # AMD External Events Utility (probably want this one)
 if (Get-Service -Name "AMD External Events Utility" -ErrorAction SilentlyContinue) {

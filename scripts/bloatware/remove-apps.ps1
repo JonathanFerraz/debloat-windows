@@ -137,6 +137,11 @@ foreach ($pkg in $packagesToRemove) {
     $appxFound = $false
     $provFound = $false
 
+    if ($pkg -eq 'Microsoft.WindowsTerminal' -and $env:WT_SESSION) {
+        Write-Output "Skipping: $pkg (active Windows Terminal session - remove manually after closing)"
+        continue
+    }
+
     $installed = Get-AppxPackage -AllUsers | Where-Object { $_.Name -eq $pkg }
     if ($installed) {
         $appxFound = $true

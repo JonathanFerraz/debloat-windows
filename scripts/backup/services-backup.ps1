@@ -68,18 +68,14 @@ $serviceNames = @(
 $backupData = @()
 
 foreach ($serviceName in $serviceNames) {
-    try {
-        $service = Get-Service -Name $serviceName -ErrorAction Stop
-        # WMI is used for StartMode as it's more reliable than Get-Service's StartType for some services
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($service) {
         $startType = (Get-WmiObject -Class Win32_Service -Filter "Name='$($service.Name)'" | Select-Object -ExpandProperty StartMode)
-        
         $backupData += [PSCustomObject]@{
             Name      = $service.Name
             Status    = $service.Status
             StartType = $startType
         }
-    } catch {
-        # Service not found, do nothing and do not show error
     }
 }
 

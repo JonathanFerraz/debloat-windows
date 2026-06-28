@@ -102,10 +102,14 @@ foreach ($key in $keysToRemove) {
         try {
             $tempRegFile = Join-Path $env:TEMP "temp_reg_export.reg"
             reg.exe export "$key" "$tempRegFile" /y | Out-Null
-            $content = Get-Content $tempRegFile
-            Add-Content -Path $removedKeysBackupFile -Value $content
-            Remove-Item $tempRegFile -Force
-            Write-Host "Backed up key for removal: $key"
+            if (-not (Test-Path $tempRegFile)) {
+                Write-Warning "reg.exe export produced no output for key: $key"
+            } else {
+                $content = Get-Content $tempRegFile -ErrorAction Stop
+                Add-Content -Path $removedKeysBackupFile -Value $content
+                Remove-Item $tempRegFile -Force -ErrorAction SilentlyContinue
+                Write-Host "Backed up key for removal: $key"
+            }
         }
         catch {
             Write-Warning "Could not back up key for removal: $key"
