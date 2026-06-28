@@ -407,8 +407,8 @@ Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_DXGIHonorF
 Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_HonorUserFSEBehaviorMode" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0 -Force
 
-# GPU scheduling
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 1 -Force
+# GPU scheduling - HwSchMode 2 = HAGS enabled (value 1 = disabled)
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 2 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DisableMultiplaneOverlay" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "Attributes" -Type "REG_DWORD" -Value 1 -Force
 
@@ -546,14 +546,15 @@ Write-Host ""
 Write-Host "[6/10] Optimizing memory and CPU..." -ForegroundColor Cyan
 
 # Memory management
-# NOTE: LargeSystemCache / DisablePagingExecutive / IoPageLockLimit removed -
-#       aggressive, marginal gain, and can cause stutter (file cache competing
-#       with the app/game working set).
+# NOTE: LargeSystemCache / IoPageLockLimit removed - aggressive and can cause
+#       stutter (file cache competing with the app/game working set).
 # NOTE: Spectre/Meltdown mitigation override (FeatureSettingsOverride*) removed -
 #       it now lives ONLY behind the gated, confirmed [M] optional in debloat.ps1.
 # NOTE: Windows Defender DisableAntiSpyware removed - it now lives ONLY behind the
 #       gated, confirmed [D] optional in debloat.ps1.
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
+# Keep kernel and drivers in RAM - eliminates page faults during gaming (safe on 16GB+ RAM)
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Type "REG_DWORD" -Value 1 -Force
 
 # CPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type "REG_DWORD" -Value 0x00000026 -Force

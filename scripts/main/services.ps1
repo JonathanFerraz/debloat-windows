@@ -8,6 +8,7 @@
 [CmdletBinding()]
 param(
     [switch]$DisableXboxLoginFeatures,
+    [switch]$DisableBluetooth,
     [switch]$SkipBackup
 )
 
@@ -110,8 +111,51 @@ $ServicesToStopAndDisable = @(
     "wisvc",
     "workfolderssvc",
     "WpcMonSvc",
-    "WSearch"
+    "WSearch",
+
+    # Game-only aggressive profile: no phone sync, home network discovery,
+    # UWP cloud data, or push notifications. Xbox/Game Bar and Bluetooth services
+    # stay out of this list on purpose.
+    "CDPSvc",
+    "CDPUserSvc",
+    "DevicePickerUserSvc",
+    "DevicesFlowUserSvc",
+    "FDResPub",
+    "fdPHost",
+    "lltdsvc",
+    "MessagingService",
+    "NcdAutoSetup",
+    "OneSyncSvc",
+    "p2pimsvc",
+    "p2psvc",
+    "PeerDistSvc",
+    "PimIndexMaintenanceSvc",
+    "PNRPAutoReg",
+    "PNRPsvc",
+    "SharedAccess",
+    "SmsRouter",
+    "SSDPSRV",
+    "TrkWks",
+    "UnistoreSvc",
+    "upnphost",
+    "UserDataSvc",
+    "WFDSConMgrSvc",
+    "WMPNetworkSvc",
+    "WpnService",
+    "WpnUserService",
+    "wcncsvc"
 )
+
+if ($DisableBluetooth) {
+    Write-Output "-- Bluetooth service disable enabled"
+    $ServicesToStopAndDisable += @(
+        "BluetoothUserService",
+        "BTAGService",
+        "BthAvctpSvc",
+        "BthHFSrv",
+        "bthserv"
+    )
+}
 
 # List of service names to set to 'Manual' (Demand) startup type
 $ServicesToSetManual = @(
@@ -257,6 +301,9 @@ $ServicesToSetManual = @(
     "wudfsvc"
 )
 
+# Do not let the Manual profile re-enable anything from the aggressive Disabled list.
+$ServicesToSetManual = $ServicesToSetManual | Where-Object { $ServicesToStopAndDisable -notcontains $_ }
+
 # Helper: resolve service names, including per-user services (Name_XXXX pattern)
 function Resolve-ServiceObjects {
     param([string]$ServiceName)
@@ -294,8 +341,13 @@ foreach ($serviceName in ($ServicesToStopAndDisable | Select-Object -Unique)) {
             # 1. Disable the service FIRST (so it won't restart)
             if ($service.StartType -ne "Disabled") {
                 Write-Host "  Disabling the service..." -NoNewline
-                Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
-                Write-Host " Done."
+                try {
+                    Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
+                    Write-Host " Done."
+                } catch {
+                    Set-ServiceStartTypeViaRegistry -ServiceName $service.Name -StartupType Disabled -ErrorAction Stop | Out-Null
+                    Write-Host " Done (registry fallback - takes effect on reboot)."
+                }
             }
             else {
                 Write-Host "  Service is already disabled."
@@ -410,7 +462,11 @@ if ($DisableXboxLoginFeatures) {
             if ($svc.Status -eq "Running") {
                 Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
             }
-            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+            try {
+                Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+            } catch {
+                Set-ServiceStartTypeViaRegistry -ServiceName $serviceName -StartupType Disabled -ErrorAction Stop | Out-Null
+            }
             Write-Host "  '$serviceName' configured as 'Disabled'." -ForegroundColor Green
         }
         catch {

@@ -7,6 +7,7 @@
 param(
     [switch]$All,
     [switch]$DisableXboxLoginFeatures,
+    [switch]$DisableBluetooth,
     [switch]$DisableSystemDevices,
     [switch]$SkipMenu,
     [string]$DnsProvider = ''
@@ -46,12 +47,15 @@ $categories = [ordered]@{
 
 # Optional toggles
 $optionals = [ordered]@{
-    'S' = @{ Name = 'Disable Microsoft Store';     Enabled = $false; Warning = $false }
-    'G' = @{ Name = 'Disable Xbox (App+Services)'; Enabled = $false; Warning = $false }
-    'D' = @{ Name = 'Disable Windows Defender RT';  Enabled = $false; Warning = $true }
-    'N' = @{ Name = 'Disable Notifications';        Enabled = $false; Warning = $false }
-    'M' = @{ Name = 'Disable Spectre Mitigations';  Enabled = $false; Warning = $true }
+    'S' = @{ Name = 'Disable Microsoft Store';        Enabled = $false; Warning = $false }
+    'G' = @{ Name = 'Disable Xbox (App+Services)';   Enabled = $false; Warning = $false }
+    'D' = @{ Name = 'Disable Windows Defender RT';   Enabled = $false; Warning = $true }
+    'N' = @{ Name = 'Disable Notifications';          Enabled = $false; Warning = $false }
+    'M' = @{ Name = 'Disable Spectre Mitigations';   Enabled = $false; Warning = $true }
     'Y' = @{ Name = 'Disable Selected System Devices'; Enabled = $true; Warning = $true }
+    'L' = @{ Name = 'Disable Bluetooth';             Enabled = $false; Warning = $true }
+    'X' = @{ Name = 'Disable CPU Core Parking';      Enabled = $false; Warning = $true }
+    'V' = @{ Name = 'Disable VBS/Memory Integrity';  Enabled = $false; Warning = $true }
 }
 
 # Fix scripts
@@ -308,8 +312,10 @@ function Invoke-PowerCPU {
     Write-Host "`n[STEP 6] Power and CPU Settings..." -ForegroundColor Green
     $servicesPath = Join-Path $scriptDir "scripts\main\services.ps1"
     if (Test-Path $servicesPath) {
-        if ($optionals.G.Enabled) { & $servicesPath -DisableXboxLoginFeatures -SkipBackup }
-        else { & $servicesPath -SkipBackup }
+        $serviceParams = @{ SkipBackup = $true }
+        if ($optionals.G.Enabled) { $serviceParams['DisableXboxLoginFeatures'] = $true }
+        if ($optionals.L.Enabled) { $serviceParams['DisableBluetooth'] = $true }
+        & $servicesPath @serviceParams
     }
     if ($optionals.Y.Enabled) {
         $devicesPath = Join-Path $scriptDir "scripts\main\system-devices.ps1"
@@ -394,6 +400,33 @@ function Invoke-OptionalSpectre {
     Write-Host "  CPU mitigations disabled." -ForegroundColor Yellow
 }
 
+function Invoke-OptionalCoreParking {
+    Write-Host "`n[OPTIONAL] Disabling CPU Core Parking..." -ForegroundColor Yellow
+    Write-Host "  WARNING: NOT recommended for Ryzen X3D (7800X3D, 9800X3D)!" -ForegroundColor Red
+    Write-Host "  On X3D, Windows scheduler is cache-aware - parking disabling breaks that." -ForegroundColor Red
+    $parkBase = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583"
+    Set-RegistryValue -Path $parkBase -Name "ValueMax" -Type "REG_DWORD" -Value 0 -Force
+    Set-RegistryValue -Path $parkBase -Name "ValueMin" -Type "REG_DWORD" -Value 0 -Force
+    # Also apply via powercfg to the active plan
+    powercfg /setacvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 0cc5b647-c1df-4637-891a-dec35c318583 0 2>$null
+    powercfg /setdcvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 0cc5b647-c1df-4637-891a-dec35c318583 0 2>$null
+    powercfg /setactive SCHEME_CURRENT 2>$null
+    Write-Host "  Core parking disabled. Reboot required." -ForegroundColor Green
+}
+
+function Invoke-OptionalVBS {
+    Write-Host "`n[OPTIONAL] Disabling VBS / Memory Integrity..." -ForegroundColor Yellow
+    Write-Host "  WARNING: Reduces security (kernel attack surface increases)!" -ForegroundColor Red
+    Write-Host "  Gain: up to 5-10% FPS, reduces stutter. Reboot required." -ForegroundColor Yellow
+    $dgPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard"
+    Set-RegistryValue -Path $dgPath -Name "EnableVirtualizationBasedSecurity" -Type "REG_DWORD" -Value 0 -Force
+    Set-RegistryValue -Path $dgPath -Name "RequirePlatformSecurityFeatures"   -Type "REG_DWORD" -Value 0 -Force
+    $hvciPath = "$dgPath\Scenarios\HypervisorEnforcedCodeIntegrity"
+    if (-not (Test-Path $hvciPath)) { New-Item -Path $hvciPath -Force | Out-Null }
+    Set-RegistryValue -Path $hvciPath -Name "Enabled" -Type "REG_DWORD" -Value 0 -Force
+    Write-Host "  VBS and Memory Integrity disabled. Reboot required." -ForegroundColor Green
+}
+
 function Invoke-Finalization {
     Write-Host "`n[FINAL] Finalizing..." -ForegroundColor Green
     Write-Host "Checking system integrity..."
@@ -450,21 +483,20 @@ function Invoke-SelectedOptimizations {
     if ($disableXbox) {
         Write-Host "`n[OPTIONAL] Disabling Xbox functionality (services, login, apps)..." -ForegroundColor Yellow
         $xboxDisablePath = Join-Path $scriptDir 'scripts\fixes\disable-xbox-login-features.ps1'
-        if (Test-Path $xboxDisablePath) { & $xboxDisablePath }
-        $xboxStoreDisablePath = Join-Path $scriptDir 'scripts\fixes\disable-xbox-store-features.ps1'
-        if (Test-Path $xboxStoreDisablePath) { & $xboxStoreDisablePath }
+        if (Test-Path $xboxDisablePath) { & $xboxDisablePath -RemoveXboxApps }
     }
 
     # Optional: Disable Microsoft Store functionality
     if ($disableStore) {
         Write-Host "`n[OPTIONAL] Disabling Microsoft Store functionality..." -ForegroundColor Yellow
-        $storeDisablePath = Join-Path $scriptDir 'scripts\fixes\disable-xbox-store-features.ps1'
-        if (Test-Path $storeDisablePath) { & $storeDisablePath }
+        Write-Host "  Store app removal is handled by the bloatware step; Xbox services are left untouched here." -ForegroundColor DarkCyan
     }
 
     if ($optionals.D.Enabled) { Invoke-OptionalDefender }
     if ($optionals.N.Enabled) { Invoke-OptionalNotifications }
     if ($optionals.M.Enabled) { Invoke-OptionalSpectre }
+    if ($optionals.X.Enabled) { Invoke-OptionalCoreParking }
+    if ($optionals.V.Enabled) { Invoke-OptionalVBS }
 
     Invoke-Finalization
 
@@ -498,6 +530,7 @@ function Invoke-SelectedOptimizations {
 # --- CLI Mode ---
 if ($All -or $SkipMenu) {
     if ($DisableXboxLoginFeatures) { $optionals.G.Enabled = $true }
+    if ($DisableBluetooth) { $optionals.L.Enabled = $true }
     if ($DisableSystemDevices) { $optionals.Y.Enabled = $true }
     if ($DnsProvider -match '^(2|cloudflare)$') { $selectedDns = 2 }
     elseif ($DnsProvider -match '^(3|quad9)$') { $selectedDns = 3 }
@@ -526,6 +559,13 @@ do {
             } else { $optionals.D.Enabled = $false }
         }
         'N' { $optionals.N.Enabled = -not $optionals.N.Enabled }
+        'L' {
+            if (-not $optionals.L.Enabled) {
+                Write-Host "`n  WARNING: Disabling Bluetooth breaks Bluetooth controllers, headsets, keyboards and mice." -ForegroundColor Red
+                $confirm = Read-Host "  Are you sure? (Y/N)"
+                if ($confirm -match '^[YySs]$') { $optionals.L.Enabled = $true }
+            } else { $optionals.L.Enabled = $false }
+        }
         'M' {
             if (-not $optionals.M.Enabled) {
                 Write-Host "`n  WARNING: Disabling CPU mitigations is a security risk!" -ForegroundColor Red
@@ -540,6 +580,23 @@ do {
                 $confirm = Read-Host "  Are you sure? (Y/N)"
                 if ($confirm -match '^[YySs]$') { $optionals.Y.Enabled = $true }
             } else { $optionals.Y.Enabled = $false }
+        }
+        'X' {
+            if (-not $optionals.X.Enabled) {
+                Write-Host "`n  WARNING: Disabling core parking can HURT performance on Ryzen X3D processors!" -ForegroundColor Red
+                Write-Host "  (7800X3D, 9800X3D, etc.) - Windows cache-aware scheduling breaks without parking." -ForegroundColor Red
+                Write-Host "  Safe for all other Ryzen and Intel CPUs." -ForegroundColor Yellow
+                $confirm = Read-Host "  Are you sure? (Y/N)"
+                if ($confirm -match '^[YySs]$') { $optionals.X.Enabled = $true }
+            } else { $optionals.X.Enabled = $false }
+        }
+        'V' {
+            if (-not $optionals.V.Enabled) {
+                Write-Host "`n  WARNING: Disabling VBS/Memory Integrity reduces kernel security!" -ForegroundColor Red
+                Write-Host "  Gain: up to 5-10% FPS and less stutter. Requires reboot." -ForegroundColor Yellow
+                $confirm = Read-Host "  Are you sure? (Y/N)"
+                if ($confirm -match '^[YySs]$') { $optionals.V.Enabled = $true }
+            } else { $optionals.V.Enabled = $false }
         }
         'P' {
             $selectedDns++

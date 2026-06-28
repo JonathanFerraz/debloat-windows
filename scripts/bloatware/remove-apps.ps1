@@ -133,12 +133,56 @@ if (-not $KeepMicrosoftStore) {
     Write-Output "-- Microsoft Store will be KEPT"
 }
 
+function Test-WindowsTerminalActive {
+    $terminalEnvVars = @('WT_SESSION', 'WT_PROFILE_ID')
+    foreach ($varName in $terminalEnvVars) {
+        if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($varName))) {
+            return $true
+        }
+    }
+
+    $terminalProcessNames = @('WindowsTerminal', 'WindowsTerminalPreview', 'wt')
+
+    try {
+        $runningTerminal = Get-Process -Name $terminalProcessNames -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($runningTerminal) {
+            return $true
+        }
+    } catch {}
+
+    try {
+        $visited = @{}
+        $currentProcessId = [int]$PID
+
+        for ($i = 0; $i -lt 16 -and $currentProcessId -gt 0; $i++) {
+            if ($visited.ContainsKey($currentProcessId)) {
+                break
+            }
+            $visited[$currentProcessId] = $true
+
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$currentProcessId" -ErrorAction SilentlyContinue
+            if (-not $process) {
+                break
+            }
+
+            $processName = [System.IO.Path]::GetFileNameWithoutExtension($process.Name)
+            if ($terminalProcessNames -contains $processName) {
+                return $true
+            }
+
+            $currentProcessId = [int]$process.ParentProcessId
+        }
+    } catch {}
+
+    return $false
+}
+
 foreach ($pkg in $packagesToRemove) {
     $appxFound = $false
     $provFound = $false
 
-    if ($pkg -eq 'Microsoft.WindowsTerminal' -and $env:WT_SESSION) {
-        Write-Output "Skipping: $pkg (active Windows Terminal session - remove manually after closing)"
+    if ($pkg -eq 'Microsoft.WindowsTerminal' -and (Test-WindowsTerminalActive)) {
+        Write-Output "Skipping: $pkg (Windows Terminal is running - close it and remove manually)"
         continue
     }
 
