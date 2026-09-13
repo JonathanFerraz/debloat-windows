@@ -42,7 +42,7 @@ catch { Write-Warning "Failed to set HKCU ConsentStore: $($_.Exception.Message)"
 try {
     $hostsPath = "$env:windir\System32\drivers\etc\hosts"
     $entry = "0.0.0.0 login.live.com"
-    $exists = Select-String -Path $hostsPath -Pattern "login\.live\.com" -SimpleMatch -Quiet -ErrorAction SilentlyContinue
+    $exists = Select-String -Path $hostsPath -Pattern '^\s*(?:0\.0\.0\.0|127\.0\.0\.1)\s+login\.live\.com(?:\s|$)' -Quiet -ErrorAction SilentlyContinue
     if (-not $exists) {
         Add-Content -Path $hostsPath -Value "`n# Block Xbox login`n$entry"
         Write-Host "Added hosts entry for login.live.com" -ForegroundColor Green

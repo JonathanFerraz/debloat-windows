@@ -8,8 +8,9 @@
 [CmdletBinding()]
 param(
     [switch]$DisableXboxLoginFeatures,
-    [switch]$DisableBluetooth,
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    [switch]$DisableNotifications,
+    [ValidateSet('Debloat','Driver','Preserve')][string]$GpuServiceProfile = 'Debloat'
 )
 
 # ----------------------------
@@ -19,24 +20,7 @@ $Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 # Import shared module
-Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
-
-# Fallback for protected services that block Set-Service even as Admin.
-# Writes Start value directly to registry (takes effect on next service start or reboot).
-function Set-ServiceStartTypeViaRegistry {
-    param(
-        [string]$ServiceName,
-        [ValidateSet('Automatic', 'Manual', 'Disabled')]
-        [string]$StartupType
-    )
-    $map = @{ 'Automatic' = 2; 'Manual' = 3; 'Disabled' = 4 }
-    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
-    if (Test-Path $regPath) {
-        Set-ItemProperty -Path $regPath -Name "Start" -Value $map[$StartupType] -Type DWord -Force -ErrorAction Stop
-        return $true
-    }
-    return $false
-}
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # Backup services before making changes
 if (-not $SkipBackup) {
@@ -97,6 +81,7 @@ $ServicesToStopAndDisable = @(
     "shpamsvc",
     "Spooler",
     "StiSvc",
+    "SysMain",
     "TabletInputService",
     "TapiSrv",
     "TermService",
@@ -111,51 +96,8 @@ $ServicesToStopAndDisable = @(
     "wisvc",
     "workfolderssvc",
     "WpcMonSvc",
-    "WSearch",
-
-    # Game-only aggressive profile: no phone sync, home network discovery,
-    # UWP cloud data, or push notifications. Xbox/Game Bar and Bluetooth services
-    # stay out of this list on purpose.
-    "CDPSvc",
-    "CDPUserSvc",
-    "DevicePickerUserSvc",
-    "DevicesFlowUserSvc",
-    "FDResPub",
-    "fdPHost",
-    "lltdsvc",
-    "MessagingService",
-    "NcdAutoSetup",
-    "OneSyncSvc",
-    "p2pimsvc",
-    "p2psvc",
-    "PeerDistSvc",
-    "PimIndexMaintenanceSvc",
-    "PNRPAutoReg",
-    "PNRPsvc",
-    "SharedAccess",
-    "SmsRouter",
-    "SSDPSRV",
-    "TrkWks",
-    "UnistoreSvc",
-    "upnphost",
-    "UserDataSvc",
-    "WFDSConMgrSvc",
-    "WMPNetworkSvc",
-    "WpnService",
-    "WpnUserService",
-    "wcncsvc"
+    "WSearch"
 )
-
-if ($DisableBluetooth) {
-    Write-Output "-- Bluetooth service disable enabled"
-    $ServicesToStopAndDisable += @(
-        "BluetoothUserService",
-        "BTAGService",
-        "BthAvctpSvc",
-        "BthHFSrv",
-        "bthserv"
-    )
-}
 
 # List of service names to set to 'Manual' (Demand) startup type
 $ServicesToSetManual = @(
@@ -232,7 +174,6 @@ $ServicesToSetManual = @(
     "SmsRouter",
     "SstpSvc",
     "StateRepository",
-    "SysMain",
     "StorSvc",
     "TextInputManagementService",
     "TieringEngineService",
@@ -301,9 +242,6 @@ $ServicesToSetManual = @(
     "wudfsvc"
 )
 
-# Do not let the Manual profile re-enable anything from the aggressive Disabled list.
-$ServicesToSetManual = $ServicesToSetManual | Where-Object { $ServicesToStopAndDisable -notcontains $_ }
-
 # Helper: resolve service names, including per-user services (Name_XXXX pattern)
 function Resolve-ServiceObjects {
     param([string]$ServiceName)
@@ -327,6 +265,7 @@ Write-Host "Starting service stop and disable process..."
 Write-Host "---------------------------------------------------------"
 
 foreach ($serviceName in ($ServicesToStopAndDisable | Select-Object -Unique)) {
+    if ($GpuServiceProfile -ne 'Debloat' -and $serviceName -in @('NvContainerLocalSystem', 'NvContainerNetworkService')) { continue }
     $services = Resolve-ServiceObjects -ServiceName $serviceName
     if (-not $services) {
         Write-Host "Skipping '$serviceName' (service not found on this system)." -ForegroundColor DarkYellow
@@ -341,13 +280,8 @@ foreach ($serviceName in ($ServicesToStopAndDisable | Select-Object -Unique)) {
             # 1. Disable the service FIRST (so it won't restart)
             if ($service.StartType -ne "Disabled") {
                 Write-Host "  Disabling the service..." -NoNewline
-                try {
-                    Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
-                    Write-Host " Done."
-                } catch {
-                    Set-ServiceStartTypeViaRegistry -ServiceName $service.Name -StartupType Disabled -ErrorAction Stop | Out-Null
-                    Write-Host " Done (registry fallback - takes effect on reboot)."
-                }
+                Set-Service -InputObject $service -StartupType Disabled -ErrorAction Stop
+                Write-Host " Done."
             }
             else {
                 Write-Host "  Service is already disabled."
@@ -366,11 +300,8 @@ foreach ($serviceName in ($ServicesToStopAndDisable | Select-Object -Unique)) {
                     Write-Host " Done."
                 } else {
                     Stop-Job $stopJob -ErrorAction SilentlyContinue
-                    # Fallback: try taskkill
-                    $svcPID = (Get-CimInstance Win32_Service -Filter "Name='$($service.Name)'" -ErrorAction SilentlyContinue).ProcessId
-                    if ($svcPID -and $svcPID -ne 0) {
-                        taskkill /F /PID $svcPID 2>$null | Out-Null
-                    }
+                    # A service can share its process with other services.
+                    # Keep it disabled for next boot; never kill the shared host.
                     Write-Host " Timed out (will stop on reboot)."
                 }
                 Remove-Job $stopJob -Force -ErrorAction SilentlyContinue
@@ -393,12 +324,15 @@ Write-Host "---------------------------------------------------------"
 Write-Host "Service stop and disable process completed."
 Write-Host "" # Blank line to separate sections
 
+if ($GpuServiceProfile -eq 'Driver') { Set-NvidiaContainerProfile -Profile Driver }
+
 # Section 2: Set Services to Manual (Demand) Startup Type
 
 Write-Host "Starting process to set services to Manual (Demand) Startup Type..."
 Write-Host "-----------------------------------------------------------------------------------"
 
 foreach ($serviceName in ($ServicesToSetManual | Select-Object -Unique)) {
+    if ($serviceName -eq 'WpnService' -and -not $DisableNotifications) { continue }
     $services = Resolve-ServiceObjects -ServiceName $serviceName
     if (-not $services) {
         Write-Host "Skipping '$serviceName' (service not found on this system)." -ForegroundColor DarkYellow
@@ -415,14 +349,8 @@ foreach ($serviceName in ($ServicesToSetManual | Select-Object -Unique)) {
                 # Note: If the service is running, it won't be stopped automatically when changing to manual,
                 # but it won't start on the next system boot.
                 Write-Host "  Setting startup type to 'Manual'..." -NoNewline
-                try {
-                    Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
-                    Write-Host " Done."
-                } catch {
-                    # Protected service: SCM blocks Set-Service even as Admin. Fall back to registry.
-                    Set-ServiceStartTypeViaRegistry -ServiceName $service.Name -StartupType Manual -ErrorAction Stop | Out-Null
-                    Write-Host " Done (registry fallback - takes effect on reboot)."
-                }
+                Set-Service -InputObject $service -StartupType Manual -ErrorAction Stop
+                Write-Host " Done."
             }
             else {
                 Write-Host "  Service is already configured for 'Manual'."
@@ -462,11 +390,7 @@ if ($DisableXboxLoginFeatures) {
             if ($svc.Status -eq "Running") {
                 Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
             }
-            try {
-                Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
-            } catch {
-                Set-ServiceStartTypeViaRegistry -ServiceName $serviceName -StartupType Disabled -ErrorAction Stop | Out-Null
-            }
+            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
             Write-Host "  '$serviceName' configured as 'Disabled'." -ForegroundColor Green
         }
         catch {
@@ -493,28 +417,19 @@ else {
     )
 
     foreach ($entry in $CriticalAuthServices) {
-        $svc = Get-Service -Name $entry.Name -ErrorAction SilentlyContinue
-        if (-not $svc) {
-            Write-Host "  '$($entry.Name)' not found on this system. Skipping." -ForegroundColor Yellow
-            continue
-        }
         try {
+            $svc = Get-Service -Name $entry.Name -ErrorAction Stop
             Set-Service -Name $entry.Name -StartupType $entry.StartupType -ErrorAction Stop
-        } catch {
-            # Protected service: fall back to registry
-            try {
-                Set-ServiceStartTypeViaRegistry -ServiceName $entry.Name -StartupType $entry.StartupType -ErrorAction Stop | Out-Null
-            } catch {
-                Write-Warning "  '$($entry.Name)' could not be configured: $($_.Exception.Message)"
-                continue
+
+            if ($entry.StartNow -and $svc.Status -ne "Running") {
+                Start-Service -Name $entry.Name -ErrorAction SilentlyContinue
             }
-        }
 
-        if ($entry.StartNow -and $svc.Status -ne "Running") {
-            Start-Service -Name $entry.Name -ErrorAction SilentlyContinue
+            Write-Host "  '$($entry.Name)' configured as '$($entry.StartupType)'." -ForegroundColor Green
         }
-
-        Write-Host "  '$($entry.Name)' configured as '$($entry.StartupType)'." -ForegroundColor Green
+        catch {
+            Write-Host "  '$($entry.Name)' not found on this system. Skipping." -ForegroundColor Yellow
+        }
     }
 
     Write-Host "Xbox/Microsoft sign-in compatibility profile applied." -ForegroundColor Cyan

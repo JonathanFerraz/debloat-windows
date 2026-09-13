@@ -1,4 +1,5 @@
 #Requires -RunAsAdministrator
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 Clear-Host
 Write-Host "==============================================" -ForegroundColor Yellow
@@ -21,7 +22,7 @@ if (-not (Test-Path $backupBaseDir)) {
     exit
 }
 
-$backups = Get-ChildItem -Path $backupBaseDir -Directory -Filter "services-*" | Sort-Object CreationTime -Descending
+$backups = @(Get-ChildItem -Path $backupBaseDir -Directory -Filter "services-*" | Sort-Object CreationTime -Descending)
 if ($backups.Count -eq 0) {
     Write-Error "No backups found in $backupBaseDir"
     Start-Sleep -Seconds 10
@@ -57,17 +58,7 @@ $services = Import-Csv -Path $backupFile
 
 foreach ($svc in $services) {
     try {
-        # First, set the startup type
-        Set-Service -Name $svc.Name -StartupType $svc.StartType -ErrorAction Stop
-        
-        # Then, adjust the running state
-        if ($svc.Status -eq "Running") {
-            Start-Service -Name $svc.Name -ErrorAction SilentlyContinue
-        }
-        # Note: No need for an explicit Stop-Service. 
-        # If the original state was Stopped, changing the StartupType is enough.
-        # The service will be started on the next reboot or manual start if needed.
-        
+        Restore-ServiceBackup -Entry $svc
         Write-Host "Service '$($svc.Name)' startup type restored to '$($svc.StartType)'."
     } catch {
         Write-Warning "Error restoring '$($svc.Name)': $($_.Exception.Message)"

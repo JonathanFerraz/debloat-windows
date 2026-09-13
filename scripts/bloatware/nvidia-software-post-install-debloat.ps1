@@ -11,7 +11,8 @@ param(
     [switch]$EnableTrace,
     [switch]$Aggressive,
     [switch]$RemoveGeForceExperience,
-    [switch]$AutoReboot
+    [switch]$AutoReboot,
+    [ValidateSet('Preserve','Driver','Debloat')][string]$GpuServiceProfile = 'Preserve'
 )
 
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -31,52 +32,7 @@ Write-Host "==============================================" -ForegroundColor Gre
 Write-Host "   NVIDIA SOFTWARE POST-INSTALL DEBLOAT       " -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green
 
-function Set-ServiceSafe {
-    param(
-        [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)][ValidateSet('Disabled','Manual','Automatic')][string]$StartupType,
-        [switch]$StopIfRunning
-    )
-
-    try {
-        $svc = Get-Service -Name $Name -ErrorAction Stop
-
-        if ($StopIfRunning -and $svc.Status -eq 'Running') {
-            Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
-        }
-
-        Set-Service -Name $Name -StartupType $StartupType -ErrorAction Stop
-        Write-Host "[OK] Service '$Name' => $StartupType" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "[INFO] Service not found or not configurable: $Name" -ForegroundColor Yellow
-    }
-}
-
-function Disable-TasksByRegex {
-    param([Parameter(Mandatory=$true)][string]$Regex)
-
-    try {
-        $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
-            $_.TaskName -match $Regex -or $_.TaskPath -match $Regex
-        }
-
-        foreach ($task in $tasks) {
-            try {
-                if ($task.State -ne 'Disabled') {
-                    $task | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null
-                }
-                Write-Host "[OK] Task disabled: $($task.TaskPath)$($task.TaskName)" -ForegroundColor Green
-            }
-            catch {
-                Write-Host "[INFO] Could not disable task: $($task.TaskPath)$($task.TaskName)" -ForegroundColor Yellow
-            }
-        }
-    }
-    catch {
-        Write-Host "[INFO] No matching tasks found for regex: $Regex" -ForegroundColor Yellow
-    }
-}
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 Write-Host "Applying safe NVIDIA debloat profile..." -ForegroundColor Cyan
 
@@ -84,7 +40,7 @@ Write-Host "Applying safe NVIDIA debloat profile..." -ForegroundColor Cyan
 Set-ServiceSafe -Name 'NvTelemetryContainer' -StartupType Disabled -StopIfRunning
 Set-ServiceSafe -Name 'NvTelemetryNetworkService' -StartupType Disabled -StopIfRunning
 Set-ServiceSafe -Name 'NVDisplay.ContainerLocalSystem' -StartupType Automatic
-Set-ServiceSafe -Name 'NvContainerLocalSystem' -StartupType Automatic
+Set-NvidiaContainerProfile -Profile $GpuServiceProfile
 
 # 2) Disable NVIDIA telemetry/update tasks
 Disable-TasksByRegex -Regex 'NvTmMon|NvTmRep|NvProfileUpdater|NvDriverUpdateCheck|NvNodeLauncher|NvContainerTelemetry'
@@ -93,8 +49,7 @@ Disable-TasksByRegex -Regex 'NvTmMon|NvTmRep|NvProfileUpdater|NvDriverUpdateChec
 if ($Aggressive) {
     Write-Host "Applying aggressive NVIDIA debloat profile..." -ForegroundColor Yellow
 
-    Set-ServiceSafe -Name 'NvContainerNetworkService' -StartupType Disabled -StopIfRunning
-    Set-ServiceSafe -Name 'NvContainerLocalSystem' -StartupType Manual
+    Set-NvidiaContainerProfile -Profile Aggressive
 
     Disable-TasksByRegex -Regex 'NVIDIA|NvContainer|GeForce'
 

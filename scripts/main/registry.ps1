@@ -7,121 +7,18 @@
 
 [CmdletBinding()]
 param(
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    [switch]$DisableDefender,
+    [switch]$DisableSpectreMitigations,
+    [switch]$DisableNotifications
 )
 
 # Import shared module
-Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # Set execution policy and error handling
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "SilentlyContinue"
-
-# Function to safely add registry entries
-function Set-RegistryValue {
-    param(
-        [string]$Path,
-        [string]$Name,
-        [string]$Type,
-        [object]$Value,
-        [switch]$Force
-    )
-    
-    try {
-        if (!(Test-Path $Path)) {
-            New-Item -Path $Path -Force | Out-Null
-        }
-        
-        switch ($Type.ToUpper()) {
-            "REG_DWORD" { Set-ItemProperty -Path $Path -Name $Name -Value ([int]$Value) -Type DWord -Force:$Force }
-            "REG_SZ" { Set-ItemProperty -Path $Path -Name $Name -Value ([string]$Value) -Type String -Force:$Force }
-            "REG_QWORD" { Set-ItemProperty -Path $Path -Name $Name -Value ([long]$Value) -Type QWord -Force:$Force }
-            default { Set-ItemProperty -Path $Path -Name $Name -Value $Value -Force:$Force }
-        }
-        return $true
-    }
-    catch {
-        Write-Warning "Failed to set registry value: $Path\$Name - $($_.Exception.Message)"
-        return $false
-    }
-}
-
-# Function to safely remove registry keys/values
-function Remove-RegistryItem {
-    param(
-        [string]$Path,
-        [string]$Name = $null,
-        [switch]$Recurse
-    )
-    
-    try {
-        if (Test-Path $Path) {
-            if ($Name) {
-                Remove-ItemProperty -Path $Path -Name $Name -Force
-            }
-            else {
-                Remove-Item -Path $Path -Force -Recurse:$Recurse
-            }
-            return $true
-        }
-        return $false
-    }
-    catch {
-        Write-Warning "Failed to remove registry item: $Path - $($_.Exception.Message)"
-        return $false
-    }
-}
-
-# Ensure script is running as Administrator
-function Assert-Admin {
-    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
-        Write-Error 'This script requires Administrator privileges.'
-        throw 'Administrator required'
-    }
-}
-
-# Backup helper that calls backup script if present
-function Backup-RegistryIfScriptExists {
-    param([string]$CallerScriptRoot)
-    $backupScript = Join-Path $CallerScriptRoot '..\backup\registry-backup.ps1'
-    if (Test-Path $backupScript) {
-        try { & $backupScript } catch { Write-Warning "Registry backup script failed: $($_.Exception.Message)" }
-    }
-}
-
-# Function to execute bcdedit commands with error handling
-function Invoke-BcdEdit {
-    param([string]$Arguments)
-    try {
-        Invoke-Expression "bcdedit.exe $Arguments" | Out-Null
-        return $true
-    }
-    catch {
-        Write-Warning "BCDEdit command failed: bcdedit $Arguments"
-        return $false
-    }
-}
-# Function to manage scheduled tasks
-function Set-ScheduledTaskState {
-    param(
-        [string]$TaskName,
-        [ValidateSet("Enable", "Disable")]$Action
-    )
-    
-    try {
-        if ($Action -eq "Enable") {
-            Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
-        }
-        else {
-            Disable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
-        }
-        return $true
-    }
-    catch {
-        Write-Warning "Failed to $Action scheduled task: $TaskName"
-        return $false
-    }
-}
 
 # ----------------------------
 # Initial Setup
@@ -291,7 +188,7 @@ if ($ActiveInterface) {
     
     $NetshCommands = @{
         "netsh int tcp set heuristics disabled"                    = "TCP Heuristics disabled"
-        "netsh int tcp set global autotuninglevel=normal"          = "TCP Auto-tuning kept enabled (wireless VR throughput)"
+        "netsh int tcp set global autotuninglevel=normal"          = "TCP Auto-tuning normal"
         "netsh int tcp set global congestionprovider=ctcp"         = "Congestion provider set to CTCP"
         "netsh int tcp set global ecncapability=disabled"          = "ECN Capability disabled"
         "netsh int tcp set global chimney=disabled"                = "TCP Chimney disabled"
@@ -301,6 +198,7 @@ if ($ActiveInterface) {
     foreach ($Command in $NetshCommands.Keys) {
         try {
             Invoke-Expression $Command | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Command exited with code $LASTEXITCODE" }
             Write-Host " $($NetshCommands[$Command])" -ForegroundColor Green
         }
         catch {
@@ -317,10 +215,8 @@ if ($ActiveInterface) {
         Write-Warning "Failed to configure MTU"
     } 
     
-    # DNS is intentionally NOT set here: it is configured by the Network step
-    # (Invoke-NetworkOptimization in debloat.ps1) based on the user's menu choice.
-    # Forcing Google here would silently override that selection.
-
+    # DNS is configured by network.ps1; preserve the provider selected there.
+    
     # Interface-specific TCP optimizations
     if ($InterfaceGUID) {
         Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$InterfaceGUID" -Name "TcpAckFrequency" -Type "REG_DWORD" -Value 1 -Force
@@ -387,7 +283,7 @@ foreach ($Path in $NetworkRegistrySettings.Keys) {
 
 # Disable network throttling and optimize MMCSS
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type "REG_DWORD" -Value 0xffffffff -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 0 -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 20 -Force # Explicitly match Windows' documented clamp of the old value 0.
 
 # Input device optimizations
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" -Name "KeyboardDataQueueSize" -Type "REG_DWORD" -Value 30 -Force
@@ -407,8 +303,8 @@ Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_DXGIHonorF
 Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_HonorUserFSEBehaviorMode" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0 -Force
 
-# GPU scheduling - HwSchMode 2 = HAGS enabled (value 1 = disabled)
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 2 -Force
+# GPU scheduling
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DisableMultiplaneOverlay" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "Attributes" -Type "REG_DWORD" -Value 1 -Force
 
@@ -425,7 +321,7 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\amdkmdag" -Name
 # Game performance profile
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Affinity" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Clock Rate" -Type "REG_DWORD" -Value 10000 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "GPU Priority" -Type "REG_DWORD" -Value 0x00000008 -Force
+# MMCSS GPU Priority is not used by Windows; no performance override is written.
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Priority" -Type "REG_DWORD" -Value 0x00000006 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Scheduling Category" -Type "REG_SZ" -Value "High" -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "SFIO Priority" -Type "REG_SZ" -Value "High" -Force
@@ -546,15 +442,13 @@ Write-Host ""
 Write-Host "[6/10] Optimizing memory and CPU..." -ForegroundColor Cyan
 
 # Memory management
-# NOTE: LargeSystemCache / IoPageLockLimit removed - aggressive and can cause
-#       stutter (file cache competing with the app/game working set).
-# NOTE: Spectre/Meltdown mitigation override (FeatureSettingsOverride*) removed -
-#       it now lives ONLY behind the gated, confirmed [M] optional in debloat.ps1.
-# NOTE: Windows Defender DisableAntiSpyware removed - it now lives ONLY behind the
-#       gated, confirmed [D] optional in debloat.ps1.
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
-# Keep kernel and drivers in RAM - eliminates page faults during gaming (safe on 16GB+ RAM)
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "IoPageLockLimit" -Type "REG_DWORD" -Value 4194304 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
+if ($DisableSpectreMitigations) { Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type "REG_DWORD" -Value 0x00000003 -Force }
+if ($DisableSpectreMitigations) { Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverrideMask" -Type "REG_DWORD" -Value 0x00000003 -Force }
+if ($DisableDefender) { Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Type "REG_DWORD" -Value 1 -Force }
 
 # CPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type "REG_DWORD" -Value 0x00000026 -Force
@@ -606,9 +500,8 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "Cpupriority" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "SerializeTimerExpiration" -Type "REG_DWORD" -Value 1 -Force
 
-# NOTE: SvcHostSplitThresholdInKB removed - collapsing all svchost into one
-#       process saves a little RAM but destroys service isolation (robustness
-#       and security cost).
+# Additional system optimizations
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "SvcHostSplitThresholdInKB" -Type "REG_DWORD" -Value 67108864 -Force
 
 # USB selective suspend disable
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USB" -Name "DisableSelectiveSuspend" -Type "REG_DWORD" -Value 1 -Force
@@ -768,7 +661,7 @@ foreach ($Path in $MouseSettings.Keys) {
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" -Name "AutoOpenCopilotLargeScreens" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Type "REG_DWORD" -Value 0 -Force
+if ($DisableNotifications) { Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Type "REG_DWORD" -Value 0 -Force }
 Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\Shell\Copilot\BingChat" -Name "IsUserEligible" -Type "REG_DWORD" -Value 0 -Force
 
 # System and performance tweaks
@@ -791,17 +684,12 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Searc
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\ApplicationManagement\AllowGameDVR" -Name "value" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\ApplicationManagement" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" -Name "AppCaptureEnabled" -Type "REG_DWORD" -Value 0 -Force
-# Game Mode kept ON: modern Windows uses it to prioritize CPU/GPU for the active
-# game and suppress background interruptions (updates, driver installs).
-Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AllowAutoGameMode" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "UseNexusForGameBarEnabled" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "ShowStartupPanel" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Avalon.Graphics" -Name "MaxMultisampleType" -Type "REG_DWORD" -Value 0x00000000 -Force
-# SysMain (Superfetch) kept Manual (3), not Disabled (4): lets it assist game
-# asset streaming on demand without auto-starting at boot.
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SysMain" -Name "Start" -Type "REG_DWORD" -Value 0x00000003 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SysMain" -Name "Start" -Type "REG_DWORD" -Value 0x00000004 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" -Name "SearchOrderConfig" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" -Name "MaintenanceDisabled" -Type "REG_DWORD" -Value 0x00000001 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "WaitToKillServiceTimeout" -Type "REG_DWORD" -Value 0x000007d0 -Force

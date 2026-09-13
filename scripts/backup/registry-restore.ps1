@@ -27,7 +27,7 @@ if (-not (Test-Path $backupBaseDir)) {
 }
 
 Write-Host "Searching for registry backups..."
-$backups = Get-ChildItem -Path $backupBaseDir -Directory -Filter "registry-*" | Sort-Object CreationTime -Descending
+$backups = @(Get-ChildItem -Path $backupBaseDir -Directory -Filter "registry-*" | Sort-Object CreationTime -Descending)
 
 if ($backups.Count -eq 0) {
     Write-Error "No registry backups found in $backupBaseDir"
@@ -53,6 +53,7 @@ Read-Host "Press Enter to begin the restoration process..."
 
 # Define paths to backup files
 $regValuesBackupFile = Join-Path $selectedBackupDir "registry-values-backup.csv"
+$regValuesXmlFile = Join-Path $selectedBackupDir "registry-values-backup.xml"
 $tasksBackupFile = Join-Path $selectedBackupDir "registry-tasks-backup.csv"
 $bcdBackupFile = Join-Path $selectedBackupDir "registry-bcd-backup.bin"
 $removedKeysBackupFile = Join-Path $selectedBackupDir "registry-removedkeys-backup.reg"
@@ -80,12 +81,13 @@ if (Test-Path $tasksBackupFile) {
 
             $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop
 
-            if ($taskInfo.State -eq 'Enabled') {
+            if ($taskInfo.State -in @('Enabled', 'Ready', 'Running', 'Queued')) {
                 $task | Enable-ScheduledTask | Out-Null
             }
-            else {
+            elseif ($taskInfo.State -eq 'Disabled') {
                 $task | Disable-ScheduledTask | Out-Null
             }
+            else { throw "Unknown saved task state: $($taskInfo.State)" }
             Write-Host "Task '$taskPath$taskName' restored to state '$($taskInfo.State)'."
         }
         catch {
@@ -100,12 +102,14 @@ else {
 
 # --- 2. Restore Network (DNS) Settings ---
 Write-Host "--- Restoring DNS settings..." -ForegroundColor Green
-if (Test-Path $networkBackupFile) {
+if (Test-Path -LiteralPath (Join-Path $selectedBackupDir 'network/dns.xml')) {
+    & "$PSScriptRoot\network-restore.ps1" -BackupDirectory (Join-Path $selectedBackupDir 'network')
+} elseif (Test-Path $networkBackupFile) {
     $networkToRestore = Import-Csv -Path $networkBackupFile
     foreach ($netInfo in $networkToRestore) {
         try {
             $dnsServers = $netInfo.DNSServers -split ','
-            Set-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -ServerAddresses ($dnsServers) -ErrorAction Stop
+            Set-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -ServerAddresses ($dnsServers)
             Write-Host "DNS for Interface $($netInfo.InterfaceIndex) restored."
         }
         catch {
@@ -123,6 +127,7 @@ Write-Host "--- Restoring removed registry keys..." -ForegroundColor Green
 if (Test-Path $removedKeysBackupFile) {
     try {
         reg.exe import $removedKeysBackupFile | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Registry import failed.' }
         Write-Host "Removed keys were successfully restored from .reg file."
     }
     catch {
@@ -135,8 +140,8 @@ else {
 
 # --- 4. Restore Registry Values ---
 Write-Host "--- Restoring all registry values (this may take a moment)..." -ForegroundColor Green
-if (Test-Path $regValuesBackupFile) {
-    $regToRestore = Import-Csv -Path $regValuesBackupFile
+if ((Test-Path $regValuesXmlFile) -or (Test-Path $regValuesBackupFile)) {
+    $regToRestore = if (Test-Path $regValuesXmlFile) { @(Import-Clixml -LiteralPath $regValuesXmlFile) } else { @(Import-Csv -Path $regValuesBackupFile) }
     $totalKeys = $regToRestore.Count
     $processedKeys = 0
     foreach ($regInfo in $regToRestore) {
@@ -181,6 +186,7 @@ if (Test-Path $bcdBackupFile) {
         try {
             Write-Host "Restaurando BCD... O sistema pode ficar temporariamente sem resposta." -ForegroundColor Yellow
             bcdedit.exe /import $bcdBackupFile /clean | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'BCD import failed.' }
             Write-Host "Restauração do BCD concluída com sucesso." -ForegroundColor Green
         }
         catch {

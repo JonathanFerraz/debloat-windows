@@ -4,6 +4,10 @@
 # ==============================================
 
 #Requires -RunAsAdministrator
+[CmdletBinding()]
+param([ValidateSet('Full','Maintenance')][string]$Mode = 'Full')
+
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 
 # Set execution policy and error handling
@@ -43,8 +47,8 @@ $tempDirs = @(
     "$env:WinDir\Prefetch",
     "$env:Temp",
     "$env:AppData\Temp",
-    "$env:AppData\Local\Temp",
-    "$env:HomePath\AppData\LocalLow\Temp",
+    "$env:LocalAppData\Temp",
+    "$env:USERPROFILE\AppData\LocalLow\Temp",
     "$env:SYSTEMDRIVE\AMD",
     "$env:SYSTEMDRIVE\NVIDIA",
     "$env:SYSTEMDRIVE\INTEL",
@@ -52,8 +56,13 @@ $tempDirs = @(
     "$env:ProgramData\Microsoft\Windows\WER\ReportQueue"
 )
 
+# Maintenance keeps prefetch, installer caches and diagnostic reports.
+if ($Mode -eq 'Maintenance') {
+    $tempDirs = @("$env:WinDir\Temp", "$env:Temp", "$env:AppData\Temp", "$env:LocalAppData\Temp", "$env:USERPROFILE\AppData\LocalLow\Temp")
+}
+
 # Clean Temp Files from Directories
-foreach ($dir in $tempDirs) {
+foreach ($dir in ($tempDirs | Select-Object -Unique)) {
     if (Test-Path $dir) {
         Write-Host "Cleaning directory: $dir"
         # Important: DO NOT remove the root folder to avoid losing special ACLs
@@ -61,11 +70,16 @@ foreach ($dir in $tempDirs) {
     }
 }
 
-# Remove Windows Update Files
-$updateDir = "$env:Windir\SoftwareDistribution\Download"
-if (Test-Path $updateDir) {
-    Write-Host "Cleaning Windows Update files"
-    Remove-Item -Path "$updateDir\*" -Recurse -Force -ErrorAction SilentlyContinue
+if ($Mode -eq 'Full') {
+# Stop update services and restore their previous running states even on failure.
+try { Clear-WindowsUpdateCache }
+catch { Write-Warning "Windows Update cache cleanup failed: $($_.Exception.Message)" }
+
+# Paths also supported by the legacy complete-cleanup BAT.
+foreach ($path in @("$env:WinDir\System32\dllcache", "$env:SystemDrive\Temp", "$env:USERPROFILE\Local Settings\History", "$env:USERPROFILE\Cookies", "$env:USERPROFILE\Recent", "$env:USERPROFILE\Local Settings\Temporary Internet Files", "$env:USERPROFILE\Local Settings\Temp")) {
+    if (Test-Path -LiteralPath $path) {
+        Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Remove Windows Log Files
@@ -119,6 +133,10 @@ foreach ($path in $firefoxPaths) {
 }
 
 # Clear Windows Event Logs (Optional: be cautious)
+& wevtutil.exe el | ForEach-Object {
+    & wevtutil.exe cl $_
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Could not clear event log: $_" }
+}
 $eventLogDirs = @(
     "$env:WinDir\System32\winevt\Logs",
     "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
@@ -152,7 +170,10 @@ $bin.items() | ForEach-Object {
 }
 
 
-Write-Host "Cleanup complete!"
+} # Full cleanup
+
+Write-Host "Cleanup complete ($Mode)."
+if ($Mode -eq 'Maintenance') { return }
 
 
 # ================= Additional Safety / Integrity Block =================

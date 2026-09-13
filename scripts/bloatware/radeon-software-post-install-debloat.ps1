@@ -33,12 +33,8 @@ else {
 Write-Host "Stopping and Disabling NT Services"
 # AMD User Experience Program Launcher (https://www.amd.com/en/corporate/amd-user-experience)
 if (Get-Service -Name "AUEPLauncher" -ErrorAction SilentlyContinue) {
-    try {
-        Stop-Service -Name "AUEPLauncher" -ErrorAction Stop
-        Set-Service -Name "AUEPLauncher" -StartupType Disabled -ErrorAction Stop
-    } catch {
-        Write-Warning "Could not stop/disable AUEPLauncher: $($_.Exception.Message)"
-    }
+    Stop-Service -Name "AUEPLauncher"
+    Set-Service -Name "AUEPLauncher" -StartupType Disabled
 }
 # AMD External Events Utility (probably want this one)
 if (Get-Service -Name "AMD External Events Utility" -ErrorAction SilentlyContinue) {
@@ -79,7 +75,7 @@ Invoke-Schtask -Arguments @('/Change', '/TN', 'StartDVR', '/DISABLE')
 # Uninstall AMD WVR64 (Virtual reality stuff)
 Write-Host "Uninstalling AMD WVR64"
 # TODO: Look this up in the registry in case the GUID changes?
-Start-Process -FilePath "$env:systemroot\system32\msiexec.exe" -ArgumentList '/uninstall "{284967ee-7da2-4fc6-b14a-361266a50448}" /quiet' -Wait
+Start-Process -FilePath "$env:systemroot\system32\msiexec.exe" -ArgumentList '/uninstall "{284967ee-7da2-4fc6-b14a-361266a50448}" /quiet /norestart' -Wait
 # msiexec.exe /uninstall "{284967ee-7da2-4fc6-b14a-361266a50448}" /quiet
 
 # Rename RSServCmd.exe so it doesn't run when RadeonSoftware.exe runs

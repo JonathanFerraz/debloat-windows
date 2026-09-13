@@ -1,4 +1,5 @@
 #Requires -RunAsAdministrator
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # ----------------------------
 # Initial Setup
@@ -70,11 +71,7 @@ if (Test-Path $serviceBackupFile) {
     $servicesToRestore = Import-Csv -Path $serviceBackupFile
     foreach ($serviceInfo in $servicesToRestore) {
         try {
-            Write-Host "Restoring service $($serviceInfo.Name) to StartupType: $($serviceInfo.StartupType)"
-            Set-Service -Name $serviceInfo.Name -StartupType $serviceInfo.StartupType -ErrorAction Stop
-            if ($serviceInfo.Status -eq 'Running') {
-                Start-Service -Name $serviceInfo.Name -ErrorAction SilentlyContinue
-            }
+            Restore-ServiceBackup -Entry $serviceInfo
         }
         catch {
             Write-Error "Failed to restore service $($serviceInfo.Name). Error: $($_.Exception.Message)"
@@ -133,8 +130,9 @@ if (Test-Path $envVarBackupFile) {
 # --- 5. Restore Registry ---
 Write-Host "--- Restoring all Registry values..." -ForegroundColor Green
 $regBackupFile = Join-Path $selectedBackupDir "telemetry-registry-backup.csv"
-if (Test-Path $regBackupFile) {
-    $regToRestore = Import-Csv -Path $regBackupFile
+$regXmlFile = Join-Path $selectedBackupDir "telemetry-registry-backup.xml"
+if ((Test-Path $regXmlFile) -or (Test-Path $regBackupFile)) {
+    $regToRestore = if (Test-Path $regXmlFile) { @(Import-Clixml -LiteralPath $regXmlFile) } else { @(Import-Csv -Path $regBackupFile) }
     $totalKeys = $regToRestore.Count
     $processedKeys = 0
     foreach ($regInfo in $regToRestore) {

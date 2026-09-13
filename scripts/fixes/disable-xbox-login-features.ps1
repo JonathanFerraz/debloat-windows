@@ -30,7 +30,9 @@ $hostsBackup = "$hostsPath.xboxdisable.bak"
 
 try {
     if (Test-Path $hostsPath) {
-        Copy-Item -Path $hostsPath -Destination $hostsBackup -Force
+        if (-not (Test-Path -LiteralPath $hostsBackup)) {
+            Copy-Item -Path $hostsPath -Destination $hostsBackup -ErrorAction Stop
+        }
 
         $lineToAdd = "0.0.0.0 login.live.com"
         $existing = Get-Content -Path $hostsPath -ErrorAction SilentlyContinue

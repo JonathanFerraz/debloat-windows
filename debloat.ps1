@@ -7,9 +7,11 @@
 param(
     [switch]$All,
     [switch]$DisableXboxLoginFeatures,
-    [switch]$DisableBluetooth,
     [switch]$DisableSystemDevices,
     [switch]$SkipMenu,
+    [ValidateSet('Full','Maintenance')][string]$CleanupMode = 'Full',
+    [ValidateSet('Debloat','Driver','Preserve')][string]$GpuServiceProfile = 'Debloat',
+    [ValidateSet('', '1', '2', '3', 'Google', 'Cloudflare', 'Quad9')]
     [string]$DnsProvider = ''
 )
 
@@ -24,7 +26,7 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 
 # --- Import Shared Module ---
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-Import-Module "$scriptDir\scripts\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
+Import-Module "$scriptDir\scripts\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # --- Initial Settings ---
 $host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
@@ -47,15 +49,12 @@ $categories = [ordered]@{
 
 # Optional toggles
 $optionals = [ordered]@{
-    'S' = @{ Name = 'Disable Microsoft Store';        Enabled = $false; Warning = $false }
-    'G' = @{ Name = 'Disable Xbox (App+Services)';   Enabled = $false; Warning = $false }
-    'D' = @{ Name = 'Disable Windows Defender RT';   Enabled = $false; Warning = $true }
-    'N' = @{ Name = 'Disable Notifications';          Enabled = $false; Warning = $false }
-    'M' = @{ Name = 'Disable Spectre Mitigations';   Enabled = $false; Warning = $true }
+    'S' = @{ Name = 'Disable Microsoft Store';     Enabled = $false; Warning = $false }
+    'G' = @{ Name = 'Disable Xbox (App+Services)'; Enabled = $false; Warning = $false }
+    'D' = @{ Name = 'Disable Windows Defender RT';  Enabled = $false; Warning = $true }
+    'N' = @{ Name = 'Disable Notifications';        Enabled = $false; Warning = $false }
+    'M' = @{ Name = 'Disable Spectre Mitigations';  Enabled = $false; Warning = $true }
     'Y' = @{ Name = 'Disable Selected System Devices'; Enabled = $true; Warning = $true }
-    'L' = @{ Name = 'Disable Bluetooth';             Enabled = $false; Warning = $true }
-    'X' = @{ Name = 'Disable CPU Core Parking';      Enabled = $false; Warning = $true }
-    'V' = @{ Name = 'Disable VBS/Memory Integrity';  Enabled = $false; Warning = $true }
 }
 
 # Fix scripts
@@ -66,18 +65,14 @@ $fixes = [ordered]@{
 }
 
 # DNS options
-# 1-3: plain resolvers. 4-5: filtering resolvers that block ads/malware at the
-# resolver level (no large hosts file, zero DNS-parse overhead). The hosts file
-# stays small (telemetry only); ads/malware are filtered upstream by the resolver.
-$dnsOptions = [ordered]@{
-    1 = @{ Name = "Google";              Primary = "8.8.8.8";       Secondary = "8.8.4.4" }
-    2 = @{ Name = "Cloudflare";          Primary = "1.1.1.1";       Secondary = "1.0.0.1" }
-    3 = @{ Name = "Quad9 (malware)";     Primary = "9.9.9.9";       Secondary = "149.112.112.112" }
-    4 = @{ Name = "AdGuard (ads+malware)"; Primary = "94.140.14.14"; Secondary = "94.140.15.15" }
-    5 = @{ Name = "Cloudflare (malware)";  Primary = "1.1.1.2";      Secondary = "1.0.0.2" }
+$dnsOptions = @{
+    1 = @{ Name = "Google";    Primary = "8.8.8.8";   Secondary = "8.8.4.4" }
+    2 = @{ Name = "Cloudflare"; Primary = "1.1.1.1";   Secondary = "1.0.0.1" }
+    3 = @{ Name = "Quad9";     Primary = "9.9.9.9";   Secondary = "149.112.112.112" }
 }
-# Default: AdGuard filtering resolver (ads + malware) - option 4.
-$selectedDns = 4
+$selectedDns = 2
+if ($DnsProvider -match '^(1|google)$') { $selectedDns = 1 }
+elseif ($DnsProvider -match '^(3|quad9)$') { $selectedDns = 3 }
 
 # --- Menu Functions ---
 function Show-Banner {
@@ -218,9 +213,9 @@ function Invoke-AllBackups {
         if (Test-Path $backup.Path) {
             Write-Host "  Backing up $($backup.Name)..." -ForegroundColor Cyan
             try { & $backup.Path }
-            catch { Write-Warning "  $($backup.Name) backup failed: $($_.Exception.Message)" }
+            catch { throw "$($backup.Name) backup failed; optimization stopped before applying changes: $($_.Exception.Message)" }
         } else {
-            Write-Warning "  Backup script not found: $($backup.Path)"
+            throw "Backup script not found: $($backup.Path)"
         }
     }
 
@@ -230,19 +225,11 @@ function Invoke-AllBackups {
 function Invoke-Cleanup {
     Write-Host "`n[STEP 1] System Cleanup..." -ForegroundColor Green
     $removeTempPath = Join-Path $scriptDir "scripts\cleanup\remove-temp.ps1"
-    if (Test-Path $removeTempPath) { & $removeTempPath }
-    Write-Host "Running Disk Cleanup..."
-    cleanmgr /verylowdisk
-
-    # Free ~7GB by disabling Reserved Storage.
-    Write-Host "Disabling Reserved Storage..."
-    dism /Online /Set-ReservedStorageState /State:Disabled 2>$null
-
-    # Reclaim space from the component store (superseded update payloads).
-    # /ResetBase prevents uninstalling already-installed updates - acceptable for
-    # a perf-focused setup, but you cannot roll those specific updates back after.
-    Write-Host "Cleaning up component store (WinSxS)... this can take several minutes."
-    dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>$null
+    if (Test-Path $removeTempPath) { & $removeTempPath -Mode $CleanupMode }
+    if ($CleanupMode -eq 'Full') {
+        Write-Host "Running Disk Cleanup..."
+        cleanmgr /verylowdisk
+    }
 }
 
 function Invoke-Bloatware {
@@ -273,49 +260,28 @@ function Invoke-Bloatware {
 function Invoke-NetworkOptimization {
     param([int]$DnsChoice)
     Write-Host "`n[STEP 3] Network Optimizations..." -ForegroundColor Green
-    Write-Host "Resetting TCP/IP settings..."
-    ipconfig /flushdns
-    ipconfig /release
-    ipconfig /renew
-    $activeNet = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.HardwareInterface } | Select-Object -First 1
-    $ifName = "Ethernet"
-    if ($activeNet) { $ifName = $activeNet.Name }
-    $dns = $dnsOptions[$DnsChoice]
-    netsh interface ip set dns name="$ifName" static $($dns.Primary)
-    netsh interface ip add dns name="$ifName" $($dns.Secondary) index=2
-    # Keep TCP auto-tuning ENABLED: disabling it caps the TCP receive window and
-    # hurts throughput for wireless VR streaming (Quest Air Link / Virtual Desktop).
-    netsh int tcp set global autotuninglevel=normal
-    Write-Host "DNS set to $($dns.Name) ($($dns.Primary), $($dns.Secondary))" -ForegroundColor Green
-    if ($DnsChoice -ge 4) {
-        Write-Host "  Ads/malware filtered at the DNS resolver (no hosts-file overhead)." -ForegroundColor DarkCyan
-    }
+    & (Join-Path $scriptDir 'scripts\main\network.ps1') -DnsProvider $dnsOptions[$DnsChoice].Name
 }
 
 function Invoke-GamingTweaks {
     Write-Host "`n[STEP 4] Gaming and Registry Tweaks..." -ForegroundColor Green
     $registryPath = Join-Path $scriptDir "scripts\main\registry.ps1"
-    if (Test-Path $registryPath) { & $registryPath -SkipBackup }
-
-    # Enable MSI mode on the GPU (reduces DPC latency / micro-stutter).
-    $msiPath = Join-Path $scriptDir "scripts\main\gpu-msi-mode.ps1"
-    if (Test-Path $msiPath) { & $msiPath }
+    if (Test-Path $registryPath) {
+        & $registryPath -SkipBackup -DisableDefender:$optionals.D.Enabled -DisableSpectreMitigations:$optionals.M.Enabled -DisableNotifications:$optionals.N.Enabled
+    }
 }
 
 function Invoke-PrivacyTelemetry {
     Write-Host "`n[STEP 5] Privacy and Telemetry..." -ForegroundColor Green
     $telemetryPath = Join-Path $scriptDir "scripts\main\telemetry.ps1"
-    if (Test-Path $telemetryPath) { & $telemetryPath -SkipBackup }
+    if (Test-Path $telemetryPath) { & $telemetryPath -SkipBackup -DisableNotifications:$optionals.N.Enabled }
 }
 
 function Invoke-PowerCPU {
     Write-Host "`n[STEP 6] Power and CPU Settings..." -ForegroundColor Green
     $servicesPath = Join-Path $scriptDir "scripts\main\services.ps1"
     if (Test-Path $servicesPath) {
-        $serviceParams = @{ SkipBackup = $true }
-        if ($optionals.G.Enabled) { $serviceParams['DisableXboxLoginFeatures'] = $true }
-        if ($optionals.L.Enabled) { $serviceParams['DisableBluetooth'] = $true }
-        & $servicesPath @serviceParams
+        & $servicesPath -SkipBackup -DisableXboxLoginFeatures:$optionals.G.Enabled -DisableNotifications:$optionals.N.Enabled -GpuServiceProfile $GpuServiceProfile
     }
     if ($optionals.Y.Enabled) {
         $devicesPath = Join-Path $scriptDir "scripts\main\system-devices.ps1"
@@ -324,12 +290,16 @@ function Invoke-PowerCPU {
     }
     Write-Host "Activating Ultimate Performance mode..."
     try {
-        $scheme = powercfg -list | Select-String 'Ultimate Performance'
-        if (-not $scheme) {
-            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 | Out-Null
+        # Reuse a stable plan ID regardless of Windows display language.
+        $schemeGuid = 'a95074e8-939a-4bf9-b1e9-179f30b48a30'
+        $schemes = powercfg -list
+        if ($LASTEXITCODE -ne 0) { throw 'Could not list power plans.' }
+        if (-not ($schemes | Select-String -SimpleMatch $schemeGuid)) {
+            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 $schemeGuid | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create Ultimate Performance plan.' }
         }
-        $schemeGuid = (powercfg -list | Select-String 'Ultimate Performance').ToString() -replace '.*\s(\{.*\})','${1}'
         powercfg -setactive $schemeGuid
+        if ($LASTEXITCODE -ne 0) { throw 'Could not activate Ultimate Performance plan.' }
     } catch {
         Write-Warning "Failed to activate Ultimate Performance power plan."
     }
@@ -361,7 +331,7 @@ function Invoke-SecurityHardening {
         if ($wmpCap) {
             $wmpCap | ForEach-Object {
                 Write-Host "  Removing capability: $($_.Name)" -ForegroundColor Cyan
-                Remove-WindowsCapability -Online -Name $_.Name -ErrorAction SilentlyContinue | Out-Null
+                Remove-WindowsCapability -Online -Name $_.Name -NoRestart -ErrorAction SilentlyContinue | Out-Null
             }
         } else {
             Write-Host "  Windows Media Player not found (already removed or not available)." -ForegroundColor DarkGray
@@ -394,37 +364,10 @@ function Invoke-OptionalNotifications {
 
 function Invoke-OptionalSpectre {
     Write-Host "`n[OPTIONAL] Disabling Spectre/Meltdown Mitigations..." -ForegroundColor Yellow
-    Write-Host "  WARNING: This is a security risk but improves CPU performance 2-5 percent!" -ForegroundColor Red
+    Write-Host "  WARNING: This reduces protection against CPU vulnerabilities; performance impact depends on the workload." -ForegroundColor Red
     Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type "DWord" -Value 3
     Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverrideMask" -Type "DWord" -Value 3
     Write-Host "  CPU mitigations disabled." -ForegroundColor Yellow
-}
-
-function Invoke-OptionalCoreParking {
-    Write-Host "`n[OPTIONAL] Disabling CPU Core Parking..." -ForegroundColor Yellow
-    Write-Host "  WARNING: NOT recommended for Ryzen X3D (7800X3D, 9800X3D)!" -ForegroundColor Red
-    Write-Host "  On X3D, Windows scheduler is cache-aware - parking disabling breaks that." -ForegroundColor Red
-    $parkBase = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583"
-    Set-RegistryValue -Path $parkBase -Name "ValueMax" -Type "REG_DWORD" -Value 0 -Force
-    Set-RegistryValue -Path $parkBase -Name "ValueMin" -Type "REG_DWORD" -Value 0 -Force
-    # Also apply via powercfg to the active plan
-    powercfg /setacvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 0cc5b647-c1df-4637-891a-dec35c318583 0 2>$null
-    powercfg /setdcvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 0cc5b647-c1df-4637-891a-dec35c318583 0 2>$null
-    powercfg /setactive SCHEME_CURRENT 2>$null
-    Write-Host "  Core parking disabled. Reboot required." -ForegroundColor Green
-}
-
-function Invoke-OptionalVBS {
-    Write-Host "`n[OPTIONAL] Disabling VBS / Memory Integrity..." -ForegroundColor Yellow
-    Write-Host "  WARNING: Reduces security (kernel attack surface increases)!" -ForegroundColor Red
-    Write-Host "  Gain: up to 5-10% FPS, reduces stutter. Reboot required." -ForegroundColor Yellow
-    $dgPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard"
-    Set-RegistryValue -Path $dgPath -Name "EnableVirtualizationBasedSecurity" -Type "REG_DWORD" -Value 0 -Force
-    Set-RegistryValue -Path $dgPath -Name "RequirePlatformSecurityFeatures"   -Type "REG_DWORD" -Value 0 -Force
-    $hvciPath = "$dgPath\Scenarios\HypervisorEnforcedCodeIntegrity"
-    if (-not (Test-Path $hvciPath)) { New-Item -Path $hvciPath -Force | Out-Null }
-    Set-RegistryValue -Path $hvciPath -Name "Enabled" -Type "REG_DWORD" -Value 0 -Force
-    Write-Host "  VBS and Memory Integrity disabled. Reboot required." -ForegroundColor Green
 }
 
 function Invoke-Finalization {
@@ -454,11 +397,6 @@ function Invoke-SelectedOptimizations {
     $disableStore = $optionals.S.Enabled
     $disableXbox = $optionals.G.Enabled
 
-    $logDir = Join-Path $scriptDir "logs"
-    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-    $logFile = Join-Path $logDir "optimization_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
-    Start-Transcript -Path $logFile -Force | Out-Null
-
     Write-Host ""
     Write-Host "==============================================" -ForegroundColor Green
     Write-Host "       STARTING OPTIMIZATION PROCESS" -ForegroundColor Green
@@ -483,20 +421,20 @@ function Invoke-SelectedOptimizations {
     if ($disableXbox) {
         Write-Host "`n[OPTIONAL] Disabling Xbox functionality (services, login, apps)..." -ForegroundColor Yellow
         $xboxDisablePath = Join-Path $scriptDir 'scripts\fixes\disable-xbox-login-features.ps1'
-        if (Test-Path $xboxDisablePath) { & $xboxDisablePath -RemoveXboxApps }
+        if (Test-Path $xboxDisablePath) { & $xboxDisablePath }
+        # The login script already applies the same hosts, policies and services.
     }
 
     # Optional: Disable Microsoft Store functionality
-    if ($disableStore) {
+    if ($disableStore -and -not $disableXbox) {
         Write-Host "`n[OPTIONAL] Disabling Microsoft Store functionality..." -ForegroundColor Yellow
-        Write-Host "  Store app removal is handled by the bloatware step; Xbox services are left untouched here." -ForegroundColor DarkCyan
+        $storeDisablePath = Join-Path $scriptDir 'scripts\fixes\disable-xbox-store-features.ps1'
+        if (Test-Path $storeDisablePath) { & $storeDisablePath }
     }
 
     if ($optionals.D.Enabled) { Invoke-OptionalDefender }
     if ($optionals.N.Enabled) { Invoke-OptionalNotifications }
     if ($optionals.M.Enabled) { Invoke-OptionalSpectre }
-    if ($optionals.X.Enabled) { Invoke-OptionalCoreParking }
-    if ($optionals.V.Enabled) { Invoke-OptionalVBS }
 
     Invoke-Finalization
 
@@ -517,11 +455,8 @@ function Invoke-SelectedOptimizations {
     Write-Host "  2. Check if all drivers are updated."
     Write-Host "  3. Configure your essential programs."
     Write-Host ""
-    Write-Host "Log file: $logFile" -ForegroundColor DarkCyan
-    Write-Host ""
     Pause
 
-    Stop-Transcript | Out-Null
     Write-Host "Restarting Explorer..."
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer.exe
@@ -530,12 +465,7 @@ function Invoke-SelectedOptimizations {
 # --- CLI Mode ---
 if ($All -or $SkipMenu) {
     if ($DisableXboxLoginFeatures) { $optionals.G.Enabled = $true }
-    if ($DisableBluetooth) { $optionals.L.Enabled = $true }
     if ($DisableSystemDevices) { $optionals.Y.Enabled = $true }
-    if ($DnsProvider -match '^(2|cloudflare)$') { $selectedDns = 2 }
-    elseif ($DnsProvider -match '^(3|quad9)$') { $selectedDns = 3 }
-    elseif ($DnsProvider -match '^(4|adguard)$') { $selectedDns = 4 }
-    elseif ($DnsProvider -match '^(5|cloudflare-malware|family)$') { $selectedDns = 5 }
     Invoke-SelectedOptimizations
     exit 0
 }
@@ -559,13 +489,6 @@ do {
             } else { $optionals.D.Enabled = $false }
         }
         'N' { $optionals.N.Enabled = -not $optionals.N.Enabled }
-        'L' {
-            if (-not $optionals.L.Enabled) {
-                Write-Host "`n  WARNING: Disabling Bluetooth breaks Bluetooth controllers, headsets, keyboards and mice." -ForegroundColor Red
-                $confirm = Read-Host "  Are you sure? (Y/N)"
-                if ($confirm -match '^[YySs]$') { $optionals.L.Enabled = $true }
-            } else { $optionals.L.Enabled = $false }
-        }
         'M' {
             if (-not $optionals.M.Enabled) {
                 Write-Host "`n  WARNING: Disabling CPU mitigations is a security risk!" -ForegroundColor Red
@@ -581,26 +504,9 @@ do {
                 if ($confirm -match '^[YySs]$') { $optionals.Y.Enabled = $true }
             } else { $optionals.Y.Enabled = $false }
         }
-        'X' {
-            if (-not $optionals.X.Enabled) {
-                Write-Host "`n  WARNING: Disabling core parking can HURT performance on Ryzen X3D processors!" -ForegroundColor Red
-                Write-Host "  (7800X3D, 9800X3D, etc.) - Windows cache-aware scheduling breaks without parking." -ForegroundColor Red
-                Write-Host "  Safe for all other Ryzen and Intel CPUs." -ForegroundColor Yellow
-                $confirm = Read-Host "  Are you sure? (Y/N)"
-                if ($confirm -match '^[YySs]$') { $optionals.X.Enabled = $true }
-            } else { $optionals.X.Enabled = $false }
-        }
-        'V' {
-            if (-not $optionals.V.Enabled) {
-                Write-Host "`n  WARNING: Disabling VBS/Memory Integrity reduces kernel security!" -ForegroundColor Red
-                Write-Host "  Gain: up to 5-10% FPS and less stutter. Requires reboot." -ForegroundColor Yellow
-                $confirm = Read-Host "  Are you sure? (Y/N)"
-                if ($confirm -match '^[YySs]$') { $optionals.V.Enabled = $true }
-            } else { $optionals.V.Enabled = $false }
-        }
         'P' {
             $selectedDns++
-            if ($selectedDns -gt $dnsOptions.Count) { $selectedDns = 1 }
+            if ($selectedDns -gt 3) { $selectedDns = 1 }
             Write-Host "  DNS changed to: $($dnsOptions[$selectedDns].Name)" -ForegroundColor Cyan
             Start-Sleep -Milliseconds 500
         }
@@ -608,6 +514,7 @@ do {
         'O' { foreach ($k in $categories.Keys) { $categories[$k].Enabled = $false } }
         'B' {
             Invoke-RestorePoint
+            Invoke-AllBackups
             Write-Host "`nBackup completed. Press any key to return..." -ForegroundColor Green
             Pause
         }

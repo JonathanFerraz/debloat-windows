@@ -1,4 +1,6 @@
 #Requires -RunAsAdministrator
+$ErrorActionPreference = 'Stop'
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # ----------------------------
 # Initial Setup
@@ -19,8 +21,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 # ----------------------------
 # Backup Configuration
 # ----------------------------
-$backupBaseDir = "C:\Ryzen Optimizer\Backup"
-$timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+$backupBaseDir = "$env:SystemDrive\Ryzen Optimizer\Backup"
+$timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss-fff'
 $folderName = "telemetry-$timestamp"
 $backupDir = Join-Path -Path $backupBaseDir -ChildPath $folderName
 New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
@@ -42,40 +44,6 @@ $envVarBackupData = @()
 #================================================================================
 # HELPER FUNCTION TO GET REGISTRY VALUES
 #================================================================================
-function Get-RegistryValueBackup {
-    param(
-        [string]$Path,
-        [string]$Name
-    )
-    $exists = $false
-    $currentValue = $null
-    $currentType = $null
-
-    try {
-        if (Test-Path $Path) {
-            $property = Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue
-            if ($null -ne $property) {
-                $exists = $true
-                $currentValue = $property.$Name
-                # Get the actual type from the key itself
-                $key = Get-Item -Path $Path
-                $currentType = $key.GetValueKind($Name)
-            }
-        }
-    }
-    catch {
-        Write-Warning "Could not read registry value: $Path \ $Name. It may be protected."
-    }
-
-    return [PSCustomObject]@{
-        Path          = $Path
-        Name          = $Name
-        Value         = $currentValue
-        Type          = $currentType
-        ExistedBefore = $exists
-    }
-}
-
 #================================================================================
 # SCRIPT BODY - DATA COLLECTION
 #================================================================================
@@ -96,17 +64,7 @@ $servicesToBackup = @(
     "gupdate", "gupdatem", "AdobeARMservice", "adobeupdateservice",
     "diagnosticshub.standardcollector.service", "diagsvc", "wercplsupport", "lfsvc"
 )
-foreach ($serviceName in $servicesToBackup) {
-    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if ($service) {
-        $serviceBackupData += [PSCustomObject]@{
-            Name         = $service.Name
-            StartupType  = $service.StartupType
-            Status       = $service.Status
-        }
-        Write-Verbose "Backed up service: $($service.Name)"
-    }
-}
+$serviceBackupData = @(Get-ServiceBackup -Names $servicesToBackup)
 Write-Host "Found and backed up $($serviceBackupData.Count) services."
 
 # --- 3. Scheduled Tasks Backup ---
@@ -372,6 +330,7 @@ $registryKeysToBackup = @(
     @{Path="HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration"; Name="Status"}
 )
 
+$registryKeysToBackup = @($registryKeysToBackup | Sort-Object Path, Name -Unique)
 $totalKeys = $registryKeysToBackup.Count
 $processedKeys = 0
 foreach ($keyInfo in $registryKeysToBackup) {
@@ -386,7 +345,10 @@ Write-Host "Backed up $($regBackupData.Count) registry values."
 #================================================================================
 Write-Host "--- Saving backup data to CSV files..." -ForegroundColor Green
 
-if ($regBackupData.Count -gt 0) { $regBackupData | Export-Csv -Path $regBackupFile -NoTypeInformation -Encoding UTF8 }
+if ($regBackupData.Count -gt 0) {
+    $regBackupData | Export-Csv -Path $regBackupFile -NoTypeInformation -Encoding UTF8
+    $regBackupData | Export-Clixml -LiteralPath (Join-Path $backupDir 'telemetry-registry-backup.xml')
+}
 if ($serviceBackupData.Count -gt 0) { $serviceBackupData | Export-Csv -Path $serviceBackupFile -NoTypeInformation -Encoding UTF8 }
 if ($taskBackupData.Count -gt 0) { $taskBackupData | Export-Csv -Path $taskBackupFile -NoTypeInformation -Encoding UTF8 }
 if ($envVarBackupData.Count -gt 0) { $envVarBackupData | Export-Csv -Path $envVarBackupFile -NoTypeInformation -Encoding UTF8 }

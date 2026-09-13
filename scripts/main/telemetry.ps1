@@ -13,7 +13,8 @@ param(
     [switch]$SkipOffice,
     [switch]$SkipApps,
     [switch]$DisableXboxLoginFeatures,
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    [switch]$DisableNotifications
 )
 
 #================================================================================
@@ -27,7 +28,7 @@ $Host.UI.RawUI.WindowTitle = "Ryzen Optimizer v3.0"
 Clear-Host
 
 # Import shared module
-Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -Force -ErrorAction Stop
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # Backup telemetry before making changes
 if (-not $SkipBackup) {
@@ -50,115 +51,19 @@ if ($SkipOffice) { Write-Host "- Microsoft Office" -ForegroundColor Red }
 if ($SkipApps) { Write-Host "- Other Applications" -ForegroundColor Red }
 if ($DisableXboxLoginFeatures) { Write-Host "- Xbox Login Features" -ForegroundColor Red }
 
-# Global counters for summary
-$global:regChanges = 0
-$global:serviceChanges = 0
-$global:taskChanges = 0
-
-#endregion
-
-#================================================================================
-# HELPER FUNCTIONS
-#================================================================================
-
-#region --- Helper Functions ---
-
-function Set-RegistryValue {
-    param(
-        [string]$Path,
-        [string]$Name,
-        $Value,
-        [string]$Type = 'DWord' # Changed to string to handle all types easily
-    )
-    try {
-        if (-not (Test-Path $Path)) {
-            New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
-        }
-        Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force -ErrorAction Stop
-        Write-Verbose "Registry value '$Name' set at '$Path'."
-        $global:regChanges++
-    }
-    catch {
-        Write-Error "Failed to set registry value '$Name' at '$Path'. Error: $($_.Exception.Message)"
-    }
-}
-
-function Remove-RegistryProperty {
-    param(
-        [string]$Path,
-        [string]$Name
-    )
-    if (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue) {
-        try {
-            Remove-ItemProperty -Path $Path -Name $Name -Force -ErrorAction Stop
-            Write-Verbose "Registry property '$Name' removed from '$Path'."
-            $global:regChanges++
-        }
-        catch {
-            Write-Error "Failed to remove registry property '$Name' from '$Path'. Error: $($_.Exception.Message)"
-        }
-    }
-}
-
-function Set-ServiceState {
-    param(
-        [string[]]$ServiceNames,
-        [ValidateSet('Disabled', 'Automatic', 'Manual')]
-        [string]$StartupType,
-        [string]$Status = "Stopped"
-    )
-    foreach ($service in $ServiceNames) {
-        $svc = Get-Service -Name $service -ErrorAction SilentlyContinue
-        if ($svc) {
-            try {
-                Set-Service -Name $service -StartupType $StartupType -ErrorAction Stop
-                # Stop the service if it is running
-                if ($svc.Status -eq 'Running') {
-                    Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
-                }
-                Write-Host "Service '$service' startup type set to '$StartupType'." -ForegroundColor Cyan
-                $global:serviceChanges++
-            }
-            catch {
-                Write-Error "Failed to set service '$service' state. Error: $($_.Exception.Message)"
-            }
-        }
-    }
-}
-
-function Disable-ScheduledTasksByPath {
-    param(
-        [string[]]$TaskPaths
-    )
-    foreach ($taskPath in $TaskPaths) {
-        $task = Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue
-        if ($task -and $task.State -ne 'Disabled') {
-            try {
-                $task | Disable-ScheduledTask
-                Write-Host "Scheduled Task '$taskPath' has been disabled." -ForegroundColor Cyan
-                $global:taskChanges++
-            }
-            catch {
-                Write-Error "Failed to disable scheduled task '$taskPath'. Error: $($_.Exception.Message)"
-            }
-        }
-    }
-}
-
-#endregion
-
-#================================================================================
-# SCRIPT BODY
-#================================================================================
+# Capture counters for this run without resetting the shared module.
+$counterBefore = (Get-OptimizerCounters).Clone()
 
 #region --- Hosts File Modification ---
 if (-not $SkipHostsFile) {
     $hostsPath = "$env:windir\System32\drivers\etc\hosts"
+    $adobeUrl = "https://a.dove.isdumb.one/list.txt"
+    try {
+        $adobeContent = (Invoke-WebRequest -Uri $adobeUrl -UseBasicParsing -ErrorAction Stop).Content
+        if ($adobeContent -is [byte[]]) { $adobeContent = [Text.Encoding]::UTF8.GetString($adobeContent) }
+        Add-HostsEntries -Path $hostsPath -Lines ($adobeContent -split '\r?\n')
+    } catch { Write-Warning "Adobe blocklist failed: $($_.Exception.Message)" }
 
-    # SECURITY: no remote download. Previously this section fetched a third-party
-    # list over HTTP and appended it unverified to the hosts file every run
-    # (supply-chain risk + unbounded growth). The blocklist is now a curated,
-    # locally-maintained list, optionally extended by a reviewed local file.
     $telemetryDomains = @"
 0.0.0.0 vortex.data.microsoft.com
 0.0.0.0 settings-win.data.microsoft.com
@@ -182,67 +87,8 @@ if (-not $SkipHostsFile) {
     if ($DisableXboxLoginFeatures) {
         $telemetryDomains += "`n0.0.0.0 login.live.com"
     }
-
-    # Merge every locally-reviewed blocklist shipped in scripts\data\*.txt
-    # (e.g. adobe-blocklist.txt vendored from a-dove-is-dumb, plus any the user adds).
-    # These are versioned in the repo and reviewed once - no per-run download.
-    $dataDir = Join-Path $PSScriptRoot "..\data"
-    if (Test-Path $dataDir) {
-        foreach ($listFile in (Get-ChildItem -Path $dataDir -Filter '*.txt' -File -ErrorAction SilentlyContinue)) {
-            $extra = Get-Content $listFile.FullName -Raw -ErrorAction SilentlyContinue
-            if ($extra) {
-                $telemetryDomains += "`n$extra"
-                Write-Host "Merged local blocklist: $($listFile.Name)" -ForegroundColor DarkCyan
-            }
-        }
-    }
-
-    # DEDUPE: only append entries that are not already present in the hosts file.
-    $existingHosts = @()
-    if (Test-Path $hostsPath) {
-        $existingHosts = @(Get-Content $hostsPath -ErrorAction SilentlyContinue | ForEach-Object { $_.Trim() })
-    }
-    $existingSet = [System.Collections.Generic.HashSet[string]]::new(
-        [string[]]$existingHosts, [System.StringComparer]::OrdinalIgnoreCase)
-
-    $newLines = @(
-        $telemetryDomains -split "`r?`n" |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -and -not $_.StartsWith('#') -and -not $existingSet.Contains($_) } |
-            Select-Object -Unique
-    )
-
-    if ($newLines.Count -eq 0) {
-        Write-Host "Hosts file already up to date (no new telemetry domains to add)." -ForegroundColor Green
-    } else {
-        $payload = ($newLines -join "`r`n")
-        $hostsWriteSuccess = $false
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                Add-Content -Path $hostsPath -Value $payload -ErrorAction Stop
-                $hostsWriteSuccess = $true
-                break
-            } catch {
-                Write-Host "  Hosts file locked (attempt $attempt/3), retrying..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 2
-            }
-        }
-        if (-not $hostsWriteSuccess) {
-            # .NET fallback: open file with sharing
-            try {
-                $stream = [System.IO.File]::Open($hostsPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
-                $writer = New-Object System.IO.StreamWriter($stream)
-                $writer.WriteLine($payload)
-                $writer.Close()
-                $stream.Close()
-                Write-Host "  Telemetry domains added via .NET fallback." -ForegroundColor Green
-            } catch {
-                Write-Warning "  Could not write to hosts file after all attempts: $($_.Exception.Message)"
-            }
-        } else {
-            Write-Host "Added $($newLines.Count) new telemetry domain(s) to hosts file." -ForegroundColor Green
-        }
-    }
+    try { Add-HostsEntries -Path $hostsPath -Lines ($telemetryDomains -split '\r?\n') }
+    catch { Write-Warning "Telemetry hosts update failed: $($_.Exception.Message)" }
 }
 #endregion
 
@@ -359,151 +205,151 @@ if (-not $SkipOffice) {
 Write-Host "Applying Windows OS Tweaks..."
 
 ### Windows Registry Tweaks ###
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDesktopAnalyticsProcessing" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDeviceNameInTelemetry" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "MicrosoftEdgeDataOptIn" 0
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDesktopAnalyticsProcessing" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowDeviceNameInTelemetry" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "MicrosoftEdgeDataOptIn" 0 | Out-Null
 # Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowWUfBCloudProcessing" 0
 # Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowUpdateComplianceProcessing" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowCommercialDataPipeline" 0
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\SQMClient\Windows" "CEIPEnable" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "AllowTelemetry" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowTelemetry" 0
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\DataCollection" "DisableOneSettingsDownloads" 1
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows NT\CurrentVersion\Software Protection Platform" "NoGenTicket" 1
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\Windows Error Reporting" "Disabled" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting" "Disabled" 1
-Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\Consent" "DefaultConsent" 0
-Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\Consent" "DefaultOverrideBehavior" 1
-Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting" "DontSendAdditionalData" 1
-Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting" "LoggingDisabled" 1
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "ContentDeliveryAllowed" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "OemPreInstalledAppsEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEverEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SilentInstalledAppsEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SystemPaneSuggestionsEnabled" 0
-Set-RegistryValue "HKLM:\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" "EnableAccountNotifications" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" "EnableAccountNotifications" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" "NOC_GLOBAL_SETTING_TOASTS_ENABLED" 0
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\EdgeUI" "DisableMFUTracking" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" "DisableMFUTracking" 1
-Set-RegistryValue "HKCU:\Control Panel\International\User Profile" "HttpAcceptLanguageOptOut" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "PublishUserActivities" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "UploadUserActivities" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessAccountInfo" $(if ($DisableXboxLoginFeatures) { 2 } else { 1 })
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCalendar" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCallHistory" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCamera" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessContacts" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessEmail" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMessaging" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMicrophone" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMotion" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessNotifications" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_UserInControlOfTheseApps" @() "MultiString"
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_ForceAllowTheseApps" @() "MultiString"
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_ForceDenyTheseApps" @() "MultiString"
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessRadios" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessTasks" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsGetDiagnosticInfo" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSyncOnPaidNetwork" 1
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync" "SyncPolicy" 5
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableCredentialsSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableCredentialsSettingSyncUserOverride" 1
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Credentials" "Enabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableDesktopThemeSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableDesktopThemeSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisablePersonalizationSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisablePersonalizationSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableStartLayoutSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableStartLayoutSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWebBrowserSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWebBrowserSettingSyncUserOverride" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWindowsSettingSync" 2
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWindowsSettingSyncUserOverride" 1
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language" "Enabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" "SearchOrderConfig" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization\Config" "DODownloadMode" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization\Config" "DownloadMode" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchPrivacy" 3
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchHistory" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowSearchToUseLocation" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWeb" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "PreventUnwantedAddIns" " " "String"
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "PreventRemoteQueries" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AlwaysUseAutoLangDetection" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowIndexingEncryptedStoresOrItems" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "DisableSearchBoxSuggestions" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "CortanaInAmbientMode" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "BingSearchEnabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCortanaButton" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CanCortanaBeEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWebOverMeteredConnections" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortanaAboveLock" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\Experience\AllowCortana" "value" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "AllowSearchToUseLocation" 1
-Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "ModelDownloadAllowed" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 1
-Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationOn" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationEnableAboveLockscreen" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" "DisableVoice" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortana" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "DeviceHistoryEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "HistoryViewEnabled" 0
-Set-RegistryValue "HKLM:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationDefaultOn" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "CortanaEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "VoiceShortcut" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaConsent" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "NumberOfSIUFInPeriod" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "PeriodInDays" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "NumberOfNotificationsSent" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "DoNotShowFeedbackNotifications" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "DoNotShowFeedbackNotifications" 1
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\HandwritingErrorReports" "PreventHandwritingErrorReports" 1
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\HandwritingErrorReports" "PreventHandwritingErrorReports" 1
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\TabletPC" "PreventHandwritingDataSharing" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "PreventHandwritingDataSharing" 1
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "AllowInputPersonalization" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts" 0
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Personalization\Settings" "AcceptedPrivacyPolicy" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableSoftLanding" 1
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightFeatures" 1
-Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\CloudContent" "DisableWindowsConsumerFeatures" 1
-Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\CloudContent" "DisableTailoredExperiencesWithDiagnosticData" 1
-Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo" "Enabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" "DisabledByGroupPolicy" 1
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338393Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353694Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353696Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338388Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338389Enabled" 0
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353698Enabled" 0
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowCommercialDataPipeline" 0 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\SQMClient\Windows" "CEIPEnable" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "AllowTelemetry" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowTelemetry" 0 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\DataCollection" "DisableOneSettingsDownloads" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows NT\CurrentVersion\Software Protection Platform" "NoGenTicket" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\Windows Error Reporting" "Disabled" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting" "Disabled" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\Consent" "DefaultConsent" 0 | Out-Null
+Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\Consent" "DefaultOverrideBehavior" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting" "DontSendAdditionalData" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Microsoft\Windows\Windows Error Reporting" "LoggingDisabled" 1 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "ContentDeliveryAllowed" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "OemPreInstalledAppsEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEverEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SilentInstalledAppsEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SystemPaneSuggestionsEnabled" 0 | Out-Null
+if ($DisableNotifications) { Set-RegistryValue "HKLM:\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" "EnableAccountNotifications" 0 | Out-Null }
+if ($DisableNotifications) { Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications" "EnableAccountNotifications" 0 | Out-Null }
+if ($DisableNotifications) { Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" "NOC_GLOBAL_SETTING_TOASTS_ENABLED" 0 | Out-Null }
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\EdgeUI" "DisableMFUTracking" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" "DisableMFUTracking" 1 | Out-Null
+Set-RegistryValue "HKCU:\Control Panel\International\User Profile" "HttpAcceptLanguageOptOut" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "PublishUserActivities" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "UploadUserActivities" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessAccountInfo" $(if ($DisableXboxLoginFeatures) { 2 } else { 1 }) | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCalendar" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCallHistory" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessCamera" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessContacts" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessEmail" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMessaging" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMicrophone" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessMotion" 2 | Out-Null
+if ($DisableNotifications) { Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessNotifications" 2 | Out-Null }
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_UserInControlOfTheseApps" @() "MultiString" | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_ForceAllowTheseApps" @() "MultiString" | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessPhone_ForceDenyTheseApps" @() "MultiString" | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessRadios" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessTasks" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsGetDiagnosticInfo" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableSyncOnPaidNetwork" 1 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync" "SyncPolicy" 5 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableCredentialsSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableCredentialsSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Credentials" "Enabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableDesktopThemeSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableDesktopThemeSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisablePersonalizationSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisablePersonalizationSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableStartLayoutSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableStartLayoutSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWebBrowserSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWebBrowserSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWindowsSettingSync" 2 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableWindowsSettingSyncUserOverride" 1 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language" "Enabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" "SearchOrderConfig" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization\Config" "DODownloadMode" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization\Config" "DownloadMode" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchPrivacy" 3 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchHistory" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowSearchToUseLocation" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWeb" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "PreventUnwantedAddIns" " " "String" | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "PreventRemoteQueries" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AlwaysUseAutoLangDetection" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowIndexingEncryptedStoresOrItems" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "DisableSearchBoxSuggestions" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "CortanaInAmbientMode" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "BingSearchEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCortanaButton" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CanCortanaBeEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWebOverMeteredConnections" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortanaAboveLock" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\Experience\AllowCortana" "value" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "AllowSearchToUseLocation" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "ModelDownloadAllowed" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationOn" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationEnableAboveLockscreen" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" "DisableVoice" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortana" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "DeviceHistoryEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "HistoryViewEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\Software\Microsoft\Speech_OneCore\Preferences" "VoiceActivationDefaultOn" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "CortanaEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "VoiceShortcut" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaConsent" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "NumberOfSIUFInPeriod" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "PeriodInDays" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Siuf\Rules" "NumberOfNotificationsSent" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "DoNotShowFeedbackNotifications" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "DoNotShowFeedbackNotifications" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\HandwritingErrorReports" "PreventHandwritingErrorReports" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\HandwritingErrorReports" "PreventHandwritingErrorReports" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\TabletPC" "PreventHandwritingDataSharing" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "PreventHandwritingDataSharing" 1 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "AllowInputPersonalization" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts" 0 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Personalization\Settings" "AcceptedPrivacyPolicy" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableSoftLanding" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightFeatures" 1 | Out-Null
+Set-RegistryValue "HKLM:\Software\Policies\Microsoft\Windows\CloudContent" "DisableWindowsConsumerFeatures" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Policies\Microsoft\Windows\CloudContent" "DisableTailoredExperiencesWithDiagnosticData" 1 | Out-Null
+Set-RegistryValue "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo" "Enabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" "DisabledByGroupPolicy" 1 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338393Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353694Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353696Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338388Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338389Enabled" 0 | Out-Null
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353698Enabled" 0 | Out-Null
 
 # NVIDIA/AMD/INTEL  ###
 
-Set-RegistryValue "HKLM:\SOFTWARE\NVIDIA Corporation\Global\NvTelemetry" "Enabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\AMD\ACE\Settings\General" "EnableTelemetry" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Intel\Display\igfxcui\Telemetry" "EnableTelemetry" 0
+Set-RegistryValue "HKLM:\SOFTWARE\NVIDIA Corporation\Global\NvTelemetry" "Enabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\AMD\ACE\Settings\General" "EnableTelemetry" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Intel\Display\igfxcui\Telemetry" "EnableTelemetry" 0 | Out-Null
 
 #endregion
 
@@ -511,18 +357,18 @@ Set-RegistryValue "HKLM:\SOFTWARE\Intel\Display\igfxcui\Telemetry" "EnableTeleme
 Write-Host "Applying Additional OS & App Tweaks..."
 
 # Microsoft Edge Expanded
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "MetricsReportingEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "BrowserSignin" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "ShoppingAssistantEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "PersonalizationReportingEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "ShowRecommendationsEnabled" 0
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "MetricsReportingEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "BrowserSignin" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "ShoppingAssistantEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "PersonalizationReportingEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Edge" "ShowRecommendationsEnabled" 0 | Out-Null
 
 # Game DVR
-Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled" 0
-Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" "AllowGameDVR" 0
+Set-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled" 0 | Out-Null
+Set-RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" "AllowGameDVR" 0 | Out-Null
 
 # Location and Sensors
-Set-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" "Status" 0
+Set-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" "Status" 0 | Out-Null
 #endregion
 
 #================================================================================
@@ -533,9 +379,9 @@ Set-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configu
 Write-Host "------------------------------------------------------------" -ForegroundColor Yellow
 Write-Host "SCRIPT EXECUTION SUMMARY" -ForegroundColor Yellow
 Write-Host "------------------------------------------------------------" -ForegroundColor Yellow
-Write-Host "Registry values created/modified: $global:regChanges" -ForegroundColor Cyan
-Write-Host "Services disabled/modified: $global:serviceChanges" -ForegroundColor Cyan
-Write-Host "Scheduled tasks disabled: $global:taskChanges" -ForegroundColor Cyan
+Write-Host "Registry values created/modified: $((Get-OptimizerCounters).RegistrySuccess - $counterBefore.RegistrySuccess)" -ForegroundColor Cyan
+Write-Host "Services disabled/modified: $((Get-OptimizerCounters).ServiceSuccess - $counterBefore.ServiceSuccess)" -ForegroundColor Cyan
+Write-Host "Scheduled tasks disabled: $((Get-OptimizerCounters).TaskSuccess - $counterBefore.TaskSuccess)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Comprehensive privacy tweaking script has completed." -ForegroundColor Green
 Write-Host "It is HIGHLY RECOMMENDED to reboot your system for all changes to take full effect." -ForegroundColor Yellow

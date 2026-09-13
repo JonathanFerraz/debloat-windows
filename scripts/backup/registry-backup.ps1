@@ -1,4 +1,6 @@
 #Requires -RunAsAdministrator
+$ErrorActionPreference = 'Stop'
+Import-Module "$PSScriptRoot\..\lib\RyzenOptimizer.psm1" -ErrorAction Stop
 
 # ----------------------------
 # Initial Setup
@@ -19,8 +21,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 # ----------------------------
 # Backup Configuration
 # ----------------------------
-$backupBaseDir = "C:\Ryzen Optimizer\Backup"
-$timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+$backupBaseDir = "$env:SystemDrive\Ryzen Optimizer\Backup"
+$timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss-fff'
 $folderName = "registry-$timestamp"
 $backupDir = Join-Path -Path $backupBaseDir -ChildPath $folderName
 New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
@@ -42,40 +44,6 @@ $networkBackupData = @()
 #================================================================================
 # HELPER FUNCTION TO GET REGISTRY VALUES
 #================================================================================
-function Get-RegistryValueBackup {
-    param(
-        [string]$Path,
-        [string]$Name
-    )
-    $exists = $false
-    $currentValue = $null
-    $currentType = $null
-
-    try {
-        if (Test-Path $Path) {
-            $property = Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue
-            if ($null -ne $property) {
-                $exists = $true
-                $currentValue = $property.$Name
-                $key = Get-Item -Path $Path
-                $currentType = $key.GetValueKind($Name)
-            }
-        }
-    }
-    catch {
-        Write-Warning "Could not read registry value: $Path \ $Name."
-    }
-
-    return [PSCustomObject]@{
-        Path          = $Path
-        Name          = $Name
-        Value         = $currentValue
-        Type          = $currentType
-        ExistedBefore = $exists
-    }
-}
-
-
 #================================================================================
 # SCRIPT BODY - DATA COLLECTION
 #================================================================================
@@ -84,6 +52,7 @@ function Get-RegistryValueBackup {
 Write-Host "--- Backing up Boot Configuration Data (BCD)..." -ForegroundColor Green
 try {
     bcdedit.exe /export $bcdBackupFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'BCD export failed.' }
     Write-Host "BCD backup created successfully."
 }
 catch {
@@ -100,19 +69,20 @@ $keysToRemove = @(
 foreach ($key in $keysToRemove) {
     if (Test-Path $key) {
         try {
-            $tempRegFile = Join-Path $env:TEMP "temp_reg_export.reg"
-            reg.exe export "$key" "$tempRegFile" /y | Out-Null
-            if (-not (Test-Path $tempRegFile)) {
-                Write-Warning "reg.exe export produced no output for key: $key"
-            } else {
-                $content = Get-Content $tempRegFile -ErrorAction Stop
-                Add-Content -Path $removedKeysBackupFile -Value $content
-                Remove-Item $tempRegFile -Force -ErrorAction SilentlyContinue
-                Write-Host "Backed up key for removal: $key"
+            $tempRegFile = Join-Path $backupDir ('key-' + [guid]::NewGuid() + '.reg')
+            $nativeKey = $key.Replace('HKCU:\', 'HKEY_CURRENT_USER\').Replace('HKLM:\', 'HKEY_LOCAL_MACHINE\')
+            reg.exe export "$nativeKey" "$tempRegFile" /y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Registry export failed: $nativeKey" }
+            if (-not (Test-Path -LiteralPath $removedKeysBackupFile)) {
+                'Windows Registry Editor Version 5.00' | Set-Content -LiteralPath $removedKeysBackupFile -Encoding Unicode
             }
+            $content = Get-Content -LiteralPath $tempRegFile -Encoding Unicode | Where-Object { $_ -ne 'Windows Registry Editor Version 5.00' }
+            Add-Content -LiteralPath $removedKeysBackupFile -Value $content -Encoding Unicode
+            Remove-Item $tempRegFile -Force
+            Write-Host "Backed up key for removal: $key"
         }
         catch {
-            Write-Warning "Could not back up key for removal: $key"
+            throw "Could not back up key for removal: $key. $($_.Exception.Message)"
         }
     }
 }
@@ -148,23 +118,27 @@ foreach ($taskRef in $tasksToManage) {
 Write-Host "Found and backed up $($taskBackupData.Count) scheduled tasks."
 
 # --- 4. Network (DNS) Backup ---
-Write-Host "--- Backing up current DNS settings..." -ForegroundColor Green
-$activeInterfaces = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
-foreach ($iface in $activeInterfaces) {
-    $dnsInfo = Get-DnsClientServerAddress -InterfaceIndex $iface.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
-    if ($dnsInfo) {
-        $networkBackupData += [PSCustomObject]@{
-            InterfaceIndex = $iface.InterfaceIndex
-            DNSServers     = $dnsInfo.ServerAddresses -join ','
-        }
-    }
-}
-Write-Host "Found and backed up DNS settings for $($networkBackupData.Count) active interface(s)."
+& "$PSScriptRoot\..\main\network.ps1" -BackupOnly -BackupDirectory (Join-Path $backupDir 'network')
 
 # --- 5. Registry Values Backup ---
 Write-Host "--- Backing up all specified registry values (this may take a moment)..." -ForegroundColor Green
 # <<< LISTA 100% COMPLETA extraída do seu script registry.ps1 >>>
 $registryKeysToBackup = @(
+    # Coverage of direct writes and data tables in registry.ps1.
+    @{Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications"; Name="ToastEnabled"};
+    @{Path="HKCU:\Control Panel\Desktop"; Name="JPEGImportQuality"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="FrameQueueLimit"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="DxgKrnlLatencyPolicy"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="VulkanPreQueueCount"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="GpuComputeStallPolicy"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler"; Name="EnablePreemptiveSubmit"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler"; Name="AsyncQueueDelay"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Services\amdkmdag"; Name="PP_DisablePowerGating"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"; Name="FeatureSettingsOverrideMask"};
+    @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"; Name="DisableAntiSpyware"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"; Name="GlobalTimerResolutionRequests"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"; Name="IgnoreTimerResolutionRequests"};
+    @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028"; Name="DCSettingIndex"};
     # [2/10] Privacy & Telemetry
     @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy"; Name="LetAppsRunInBackground"};
     @{Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications"; Name="GlobalUserDisabled"};
@@ -452,6 +426,7 @@ if ($activeInterface) {
 }
 
 
+$registryKeysToBackup = @($registryKeysToBackup | Sort-Object Path, Name -Unique)
 $totalKeys = $registryKeysToBackup.Count
 $processedKeys = 0
 foreach ($keyInfo in $registryKeysToBackup) {
@@ -466,7 +441,10 @@ Write-Host "Backed up $($regBackupData.Count) registry values."
 #================================================================================
 Write-Host "--- Saving all backup data to files..." -ForegroundColor Green
 
-if ($regBackupData.Count -gt 0) { $regBackupData | Export-Csv -Path $regValuesBackupFile -NoTypeInformation -Encoding UTF8 }
+if ($regBackupData.Count -gt 0) {
+    $regBackupData | Export-Csv -Path $regValuesBackupFile -NoTypeInformation -Encoding UTF8
+    $regBackupData | Export-Clixml -LiteralPath (Join-Path $backupDir 'registry-values-backup.xml') -ErrorAction Stop
+}
 if ($taskBackupData.Count -gt 0) { $taskBackupData | Export-Csv -Path $tasksBackupFile -NoTypeInformation -Encoding UTF8 }
 if ($networkBackupData.Count -gt 0) { $networkBackupData | Export-Csv -Path $networkBackupFile -NoTypeInformation -Encoding UTF8 }
 

@@ -1,8 +1,9 @@
 @echo off
-net stop wuauserv
-net stop bits
-del /f /s /q %windir%\SoftwareDistribution\Download\*.*
-net start wuauserv
-net start bits
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\cleanup\clear-update-cache.ps1"
+if errorlevel 1 (
+    echo [ERRO] A limpeza falhou. Verifique as mensagens acima.
+    pause
+    exit /b 1
+)
 echo Cache do Windows Update limpo!
 pause
