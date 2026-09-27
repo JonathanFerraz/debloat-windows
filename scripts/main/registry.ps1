@@ -304,7 +304,7 @@ Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_HonorUserF
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0 -Force
 
 # GPU scheduling
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 2 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DisableMultiplaneOverlay" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "Attributes" -Type "REG_DWORD" -Value 1 -Force
 
@@ -684,7 +684,7 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Searc
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\ApplicationManagement\AllowGameDVR" -Name "value" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\ApplicationManagement" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" -Name "AppCaptureEnabled" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 0 -Force
+Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "UseNexusForGameBarEnabled" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "ShowStartupPanel" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Type "REG_DWORD" -Value 0x00000000 -Force
