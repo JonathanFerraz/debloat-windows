@@ -55,6 +55,7 @@ $optionals = [ordered]@{
     'N' = @{ Name = 'Disable Notifications';        Enabled = $false; Warning = $false }
     'M' = @{ Name = 'Disable Spectre Mitigations';  Enabled = $false; Warning = $true }
     'Y' = @{ Name = 'Disable Selected System Devices'; Enabled = $true; Warning = $true }
+    'I' = @{ Name = 'Enable MSI Interrupt Mode (GPU/NIC)'; Enabled = $false; Warning = $true }
 }
 
 # Fix scripts
@@ -288,6 +289,11 @@ function Invoke-PowerCPU {
         if (Test-Path $devicesPath) { & $devicesPath -SkipBackup }
         else { Write-Warning "System devices script not found: $devicesPath" }
     }
+    if ($optionals.I.Enabled) {
+        $msiPath = Join-Path $scriptDir "scripts\main\msi-mode.ps1"
+        if (Test-Path $msiPath) { & $msiPath -SkipBackup }
+        else { Write-Warning "MSI mode script not found: $msiPath" }
+    }
     Write-Host "Activating Ultimate Performance mode..."
     try {
         # Reuse a stable plan ID regardless of Windows display language.
@@ -503,6 +509,14 @@ do {
                 $confirm = Read-Host "  Are you sure? (Y/N)"
                 if ($confirm -match '^[YySs]$') { $optionals.Y.Enabled = $true }
             } else { $optionals.Y.Enabled = $false }
+        }
+        'I' {
+            if (-not $optionals.I.Enabled) {
+                Write-Host "`n  WARNING: Switches GPU/NIC to MSI interrupt mode. Requires reboot." -ForegroundColor Red
+                Write-Host "  Revert anytime with: scripts\main\msi-mode.ps1 -Disable" -ForegroundColor Red
+                $confirm = Read-Host "  Are you sure? (Y/N)"
+                if ($confirm -match '^[YySs]$') { $optionals.I.Enabled = $true }
+            } else { $optionals.I.Enabled = $false }
         }
         'P' {
             $selectedDns++
