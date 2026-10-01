@@ -56,9 +56,7 @@ A powerful and customizable PowerShell script designed to **debloat**, **optimiz
 To further reduce latency and improve gaming performance, disable the following devices via **Device Manager**:
 
 - AMD Controller Emulation
-- AMD Crash Defender
 - Composite Bus Enumerator
-- High Precision Event Timer (HPET)
 - Microsoft Hyper-V Virtualization Infrastructure Driver
 - Microsoft Virtual Drive Enumerator
 - NDIS Virtual Network Adapter Enumerator

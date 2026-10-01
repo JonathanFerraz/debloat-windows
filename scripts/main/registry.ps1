@@ -160,7 +160,7 @@ Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "LowLevelHooksTimeou
 Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "AutoEndTasks" -Type "REG_SZ" -Value "1" -Force
 Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "WaitToKillAppTimeout" -Type "REG_SZ" -Value "2000" -Force
 Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "HungAppTimeout" -Type "REG_SZ" -Value "1000" -Force
-Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "ForegroundLockTimeout" -Type "REG_DWORD" -Value 0 -Force
+Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "ForegroundLockTimeout" -Type "REG_DWORD" -Value 200000 -Force # Windows default; 0 lets background apps steal focus from the game.
 Set-RegistryValue -Path "HKCU:\Control Panel\Desktop" -Name "JPEGImportQuality" -Type "REG_DWORD" -Value 0x00000064 -Force
 
 # Show hidden files and folders
@@ -282,7 +282,7 @@ foreach ($Path in $NetworkRegistrySettings.Keys) {
 }
 
 # Disable network throttling and optimize MMCSS
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type "REG_DWORD" -Value 0xffffffff -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Type "REG_DWORD" -Value 10 -Force # Windows default; disabling it gives no proven gain.
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "SystemResponsiveness" -Type "REG_DWORD" -Value 20 -Force # Explicitly match Windows' documented clamp of the old value 0.
 
 # Input device optimizations
@@ -297,24 +297,14 @@ Write-Host "[5/10] Applying gaming optimizations..." -ForegroundColor Cyan
 
 # Game Mode settings
 Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_FSEBehavior" -Type "REG_DWORD" -Value 2 -Force
-Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_FSEBehaviorMode" -Type "REG_DWORD" -Value 2 -Force
-Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_DXGIHonorFSEWindowsCompatible" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_HonorUserFSEBehaviorMode" -Type "REG_DWORD" -Value 1 -Force
+# Fullscreen Optimizations stay at the Windows default: forcing legacy exclusive fullscreen (FSEBehavior=2) is a known Alt+Tab freeze source.
+foreach ($Name in "GameDVR_FSEBehavior", "GameDVR_FSEBehaviorMode", "GameDVR_DXGIHonorFSEWindowsCompatible", "GameDVR_HonorUserFSEBehaviorMode") {
+    Remove-RegistryProperty -Path "HKCU:\System\GameConfigStore" -Name $Name | Out-Null
+}
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Type "REG_DWORD" -Value 0 -Force
 
 # GPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Type "REG_DWORD" -Value 2 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DisableMultiplaneOverlay" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "Attributes" -Type "REG_DWORD" -Value 1 -Force
-
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "FrameQueueLimit" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DxgKrnlLatencyPolicy" -Type "REG_DWORD" -Value 2 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "VulkanPreQueueCount" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "GpuComputeStallPolicy" -Type "REG_DWORD" -Value 1 -Force
-
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler" -Name "EnablePreemptiveSubmit" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler" -Name "AsyncQueueDelay" -Type "REG_DWORD" -Value 0 -Force
 
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\amdkmdag" -Name "PP_DisablePowerGating" -Type "REG_DWORD" -Value 1 -Force
 
@@ -325,62 +315,6 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Mult
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Priority" -Type "REG_DWORD" -Value 0x00000006 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "Scheduling Category" -Type "REG_SZ" -Value "High" -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Name "SFIO Priority" -Type "REG_SZ" -Value "High" -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" -Name "GPU_SCHEDULER_MODE" -Type "REG_SZ" -Value "47" -Force
-
-# GPU performance settings
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" -Name "DirectX12EnableHardwareProtected" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences" -Name "GpuPreference" -Type "REG_DWORD" -Value 0x00000002 -Force
-
-# DWM (Desktop Window Manager) optimizations for gaming
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "WindowedGsyncGeforceFlag" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "FrameRateMin" -Type "REG_DWORD" -Value 0xFFFFFFFF -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "IgnoreDisplayChangeDuration" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "LingerInterval" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "LicenseInterval" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "RestrictedNvcplUIMode" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "DisableSpecificPopups" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "DisableExpirationPopups" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "EnableForceIgpuDgpuFromUI" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "HideXGpuTrayIcon" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "ShowTrayIcon" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "HideBalloonNotification" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "PerformanceState" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "Gc6State" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "FrameDisplayBaseNegOffsetNS" -Type "REG_DWORD" -Value 0xFFE17B80 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "FrameDisplayResDivValue" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "IgnoreNodeLocked" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "IgnoreSP" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" -Name "DontAskAgain" -Type "REG_DWORD" -Value 1 -Force
-
-# Graphics drivers power and latency optimizations
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyActivelyUsed" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyIdleLongTime" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyIdleMonitorOff" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyIdleNoContext" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyIdleShortTime" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultD3TransitionLatencyIdleVeryLongTime" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceIdle0" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceIdle0MonitorOff" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceIdle1" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceIdle1MonitorOff" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceMemory" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceNoContext" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceNoContextMonitorOff" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceOther" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultLatencyToleranceTimerPeriod" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultMemoryRefreshLatencyToleranceActivelyUsed" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultMemoryRefreshLatencyToleranceMonitorOff" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "DefaultMemoryRefreshLatencyToleranceNoContext" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "Latency" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "MaxIAverageGraphicsLatencyInOneBucket" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "MiracastPerfTrackGraphicsLatency" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "MonitorLatencyTolerance" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "MonitorRefreshLatencyTolerance" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" -Name "TransitionLatency" -Type "REG_DWORD" -Value 1 -Force
-
-# Additional graphics optimizations
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" -Name "FlipQueueSize" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "FrameLatency" -Type "REG_DWORD" -Value 0 -Force
 
 # Remove gaming-related registry keys
 Write-Host "Removing registry keys..." -ForegroundColor Yellow
@@ -399,25 +333,35 @@ foreach ($Key in $KeysToRemove) {
     }
 }
 
-# Additional DirectX and gaming optimizations
-Write-Host "Applying additional DirectX optimizations..." -ForegroundColor Yellow
+# Legacy overrides removed: undocumented/ineffective names (or latency/timer values that can destabilize presentation).
+# Absent value = Windows default, so earlier runs are cleaned up too.
+$LegacyValuesToRemove = [ordered]@{
+    "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" = @("Attributes", "DisableMultiplaneOverlay", "DxgKrnlLatencyPolicy", "FrameLatency", "FrameQueueLimit", "GpuComputeStallPolicy", "VulkanPreQueueCount")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler" = @("AsyncQueueDelay", "EnablePreemptiveSubmit")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" = @("GPU_SCHEDULER_MODE")
+    "HKLM:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" = @("DirectX12EnableHardwareProtected")
+    "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences" = @("GpuPreference")
+    "HKLM:\SOFTWARE\Microsoft\Windows\DWM\Schedule" = @("DisableExpirationPopups", "DisableSpecificPopups", "DontAskAgain", "EnableForceIgpuDgpuFromUI", "FrameDisplayBaseNegOffsetNS", "FrameDisplayResDivValue", "FrameRateMin", "Gc6State", "HideBalloonNotification", "HideXGpuTrayIcon", "IgnoreDisplayChangeDuration", "IgnoreNodeLocked", "IgnoreSP", "LicenseInterval", "LingerInterval", "PerformanceState", "RestrictedNvcplUIMode", "ShowTrayIcon", "WindowedGsyncGeforceFlag")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Power" = @("DefaultD3TransitionLatencyActivelyUsed", "DefaultD3TransitionLatencyIdleLongTime", "DefaultD3TransitionLatencyIdleMonitorOff", "DefaultD3TransitionLatencyIdleNoContext", "DefaultD3TransitionLatencyIdleShortTime", "DefaultD3TransitionLatencyIdleVeryLongTime", "DefaultLatencyToleranceIdle0", "DefaultLatencyToleranceIdle0MonitorOff", "DefaultLatencyToleranceIdle1", "DefaultLatencyToleranceIdle1MonitorOff", "DefaultLatencyToleranceMemory", "DefaultLatencyToleranceNoContext", "DefaultLatencyToleranceNoContextMonitorOff", "DefaultLatencyToleranceOther", "DefaultLatencyToleranceTimerPeriod", "DefaultMemoryRefreshLatencyToleranceActivelyUsed", "DefaultMemoryRefreshLatencyToleranceMonitorOff", "DefaultMemoryRefreshLatencyToleranceNoContext", "Latency", "MaxIAverageGraphicsLatencyInOneBucket", "MiracastPerfTrackGraphicsLatency", "MonitorLatencyTolerance", "MonitorRefreshLatencyTolerance", "TransitionLatency")
+    "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" = @("FlipQueueSize")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" = @("IRQ16Priority", "IRQ8Priority")
+    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" = @("TimerResolution")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" = @("ClockTimerAlwaysOnPresent", "ClockTimerHighLatency", "ClockTimerPerCpu", "Cpupriority", "DisableThrottle", "KiClockTimerAlwaysOnPresent", "KiClockTimerHighLatency", "KiClockTimerPerCpu", "SerializeTimerExpiration")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028" = @("ACSettingIndex", "DCSettingIndex")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" = @("Affinity", "Background Only", "BackgroundPriority", "Clock Rate", "GPU Priority", "Latency Sensitive", "Priority", "Scheduling Category", "SFIO Priority")
+    "HKLM:\SOFTWARE\Microsoft\DirectX" = @("DisableThreadedOptimizations", "MaxFrameLatency")
+    "HKLM:\SOFTWARE\Microsoft\Direct3D\Global" = @("DisableVSync", "EnableMultiThreadedRendering", "MaxQueuedFrames")
+    "HKLM:\SOFTWARE\Microsoft\Direct3D\Drivers" = @("SoftwareOnly")
+    "HKLM:\SOFTWARE\Microsoft\DirectInput" = @("EnableBackgroundProcessing")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\943c8cb6-6f93-4227-ad87-e9a3feec08d1" = @("DisableMultiplaneOverlay")
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Power" = @("ExitLatency", "ExitLatencyCheckEnabled", "Latency", "LatencyToleranceDefault", "LatencyToleranceFSVP", "LatencyTolerancePerfOverride", "LatencyToleranceScreenOffIR", "LatencyToleranceVSyncEnabled", "RtlCapabilityCheckLatency")
+}
+foreach ($Path in $LegacyValuesToRemove.Keys) {
+    foreach ($Name in $LegacyValuesToRemove[$Path]) { Remove-RegistryProperty -Path $Path -Name $Name | Out-Null }
+}
 
+# TDR timeouts
 $AdditionalGamingSettings = @{
-    "HKLM:\SOFTWARE\Microsoft\DirectX"                       = @{
-        "MaxFrameLatency"              = @("REG_DWORD", 1)
-        "DisableThreadedOptimizations" = @("REG_DWORD", 0)
-    }
-    "HKLM:\SOFTWARE\Microsoft\Direct3D\Global"               = @{
-        "MaxQueuedFrames"              = @("REG_DWORD", 1)
-        "EnableMultiThreadedRendering" = @("REG_DWORD", 1)
-        "DisableVSync"                 = @("REG_DWORD", 1)
-    }
-    "HKLM:\SOFTWARE\Microsoft\Direct3D\Drivers"              = @{
-        "SoftwareOnly" = @("REG_DWORD", 0)
-    }
-    "HKLM:\SOFTWARE\Microsoft\DirectInput"                   = @{
-        "EnableBackgroundProcessing" = @("REG_DWORD", 1)
-    }
     "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" = @{
         "TdrDelay"    = @("REG_DWORD", 10)
         "TdrDdiDelay" = @("REG_DWORD", 10)
@@ -443,7 +387,7 @@ Write-Host "[6/10] Optimizing memory and CPU..." -ForegroundColor Cyan
 
 # Memory management
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Type "REG_DWORD" -Value 1 -Force
+Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Type "REG_DWORD" -Value 0 -Force # Windows client default; 1 starves game working sets.
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "IoPageLockLimit" -Type "REG_DWORD" -Value 4194304 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "featureSettings" -Type "REG_DWORD" -Value 1 -Force
 if ($DisableSpectreMitigations) { Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "FeatureSettingsOverride" -Type "REG_DWORD" -Value 0x00000003 -Force }
@@ -452,18 +396,13 @@ if ($DisableDefender) { Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microso
 
 # CPU scheduling
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Type "REG_DWORD" -Value 0x00000026 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "IRQ8Priority" -Type "REG_DWORD" -Value 0x00000001 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "IRQ16Priority" -Type "REG_DWORD" -Value 0x00000002 -Force
 
 # Disable prefetch/superfetch
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" -Name "EnablePrefetcher" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" -Name "EnableSuperfetch" -Type "REG_DWORD" -Value 0 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" -Name "EnableBoottrace" -Type "REG_DWORD" -Value 0 -Force
 
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583" -Name "ValueMax" -Type "REG_DWORD" -Value 0 -Force
-
 # System multimedia profile timer resolution
-Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "TimerResolution" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "GlobalTimerResolutionRequests" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "IgnoreTimerResolutionRequests" -Type "REG_DWORD" -Value 0 -Force
 
@@ -495,24 +434,11 @@ Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction" -Na
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NTFSDisable8dot3NameCreation" -Type "REG_DWORD" -Value 1 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsMemoryUsage" -Type "REG_DWORD" -Value 2 -Force
 
-# Minimize DPC Latency
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DisableThrottle" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "Cpupriority" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "SerializeTimerExpiration" -Type "REG_DWORD" -Value 1 -Force
-
 # Additional system optimizations
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "SvcHostSplitThresholdInKB" -Type "REG_DWORD" -Value 67108864 -Force
 
 # USB selective suspend disable
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USB" -Name "DisableSelectiveSuspend" -Type "REG_DWORD" -Value 1 -Force
-
-# Advanced kernel timer optimizations
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KiClockTimerPerCpu" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KiClockTimerHighLatency" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KiClockTimerAlwaysOnPresent" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "ClockTimerPerCpu" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "ClockTimerHighLatency" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "ClockTimerAlwaysOnPresent" -Type "REG_DWORD" -Value 1 -Force
 
 # ----------------------------
 # 8. Security Hardening
@@ -557,7 +483,7 @@ Write-Host "Configuring BCDEdit settings..." -ForegroundColor Yellow
 
 $BCDEditCommands = @(
     "/set bootux disabled",
-    "/set tscsyncpolicy enhanced",
+    "/deletevalue tscsyncpolicy",
     "/deletevalue useplatformclock",
     "/deletevalue useplatformtick",
     "/set disabledynamictick No",
@@ -584,9 +510,6 @@ $PowerTweaks = @{
     "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\be337238-0d82-4146-a960-4f3749d470c7" = @{
         "Attributes" = @("REG_DWORD", 2)
     }
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\943c8cb6-6f93-4227-ad87-e9a3feec08d1" = @{
-        "DisableMultiplaneOverlay" = @("REG_DWORD", 0x00000001)
-    }
     "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"                                                                         = @{
         "HiberBootEnabled"        = @("REG_DWORD", 0)
         "CoalescingTimerInterval" = @("REG_DWORD", 0)
@@ -606,22 +529,8 @@ foreach ($Path in $PowerTweaks.Keys) {
     }
 }
 
-# Additional power settings
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583" -Name "ValueMin" -Type "REG_DWORD" -Value 0 -Force
-
 # Processor power management settings
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028" -Name "ACSettingIndex" -Type "REG_DWORD" -Value 100 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\ea062031-0e34-4ff1-9b6d-eb1059334028" -Name "DCSettingIndex" -Type "REG_DWORD" -Value 100 -Force
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Attributes" -Type "REG_DWORD" -Value 2 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Affinity" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Background Only" -Type "REG_SZ" -Value "False" -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Clock Rate" -Type "REG_DWORD" -Value 65536 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "GPU Priority" -Type "REG_DWORD" -Value 8 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Priority" -Type "REG_DWORD" -Value 6 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Scheduling Category" -Type "REG_SZ" -Value "High" -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "SFIO Priority" -Type "REG_SZ" -Value "High" -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "BackgroundPriority" -Type "REG_DWORD" -Value 0 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\75b0ae3f-bce0-45a7-8c89-c9611c25e100" -Name "Latency Sensitive" -Type "REG_SZ" -Value "True" -Force
 
 # Disable HPET and time services
 Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient" -Name "Enabled" -Type "REG_DWORD" -Value 0 -Force
@@ -678,6 +587,7 @@ Set-RegistryValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Storage
 # Additional system optimizations
 Set-RegistryValue -Path "HKLM:\SYSTEM\ControlSet001\Services\Ndu" -Name "Start" -Type "REG_DWORD" -Value 0x00000004 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" -Name "OverlayTestMode" -Type "REG_DWORD" -Value 0x00000005 -Force
+Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" -Name "OverlayMinFPS" -Type "REG_DWORD" -Value 0 -Force # Needed with OverlayTestMode on Windows 11 24H2+ to keep MPO off.
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\MSMQ" -Name "TCPNoDelay" -Type "REG_DWORD" -Value 0x00000001 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter" -Name "ActivationType" -Type "REG_DWORD" -Value 0x00000000 -Force
 Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Type "REG_DWORD" -Value 0x00000000 -Force
@@ -696,17 +606,6 @@ Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "WaitToKi
 Set-RegistryValue -Path "HKCU:\Control Panel\Keyboard" -Name "InitialKeyboardIndicators" -Type "REG_SZ" -Value "0" -Force
 
 # Accessibility keys fully disabled (StickyKeys=506, ToggleKeys=58 disables all popups and shortcuts)
-
-# Advanced power and latency settings
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "ExitLatency" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "ExitLatencyCheckEnabled" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "Latency" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "LatencyToleranceDefault" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "LatencyToleranceFSVP" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "LatencyTolerancePerfOverride" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "LatencyToleranceScreenOffIR" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "LatencyToleranceVSyncEnabled" -Type "REG_DWORD" -Value 1 -Force
-Set-RegistryValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "RtlCapabilityCheckLatency" -Type "REG_DWORD" -Value 1 -Force
 
 # Precision Touchpad
 Set-RegistryValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad" -Name "EnablePrecision" -Type "REG_DWORD" -Value 0 -Force

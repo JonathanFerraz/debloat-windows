@@ -386,6 +386,7 @@ $registryKeysToBackup = @(
     @{Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"; Name="01"};
     @{Path="HKLM:\SYSTEM\ControlSet001\Services\Ndu"; Name="Start"};
     @{Path="HKLM:\SOFTWARE\Microsoft\Windows\Dwm"; Name="OverlayTestMode"};
+    @{Path="HKLM:\SOFTWARE\Microsoft\Windows\Dwm"; Name="OverlayMinFPS"};
     @{Path="HKLM:\SOFTWARE\Microsoft\MSMQ"; Name="TCPNoDelay"};
     @{Path="HKLM:\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter"; Name="ActivationType"};
     @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"; Name="AllowCortana"};

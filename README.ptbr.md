@@ -56,9 +56,7 @@ Um script em PowerShell poderoso e personalizável, desenvolvido para **remover 
 Para reduzir ainda mais a latência e melhorar o desempenho em jogos, desative os seguintes dispositivos pelo **Gerenciador de Dispositivos**:
 
 - AMD Controller Emulation
-- AMD Crash Defender
 - Composite Bus Enumerator
-- High Precision Event Timer (HPET)
 - Microsoft Hyper-V Virtualization Infrastructure Driver
 - Microsoft Virtual Drive Enumerator
 - NDIS Virtual Network Adapter Enumerator

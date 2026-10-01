@@ -35,9 +35,7 @@ Write-Host ""
 
 $TargetSystemDevices = @(
     "AMD Controller Emulation",
-    "AMD Crash Defender",
     "Composite Bus Enumerator",
-    "High Precision Event Timer",
     "Microsoft Hyper-V Virtualization Infrastructure Driver",
     "Microsoft Virtual Drive Enumerator",
     "NDIS Virtual Network Adapter Enumerator",
@@ -80,6 +78,17 @@ foreach ($friendlyName in $TargetSystemDevices) {
             $failedCount++
         }
     }
+}
+
+# HPET is left to Windows; re-enable it if an earlier run disabled it (timer changes are a freeze suspect on Ryzen).
+foreach ($hpet in @($systemDevices | Where-Object { $_.FriendlyName -eq "High Precision Event Timer" -and $_.Problem -eq "CM_PROB_DISABLED" })) {
+    try {
+        if ($PSCmdlet.ShouldProcess($hpet.InstanceId, "Enable-PnpDevice")) {
+            Enable-PnpDevice -InstanceId $hpet.InstanceId -Confirm:$false -ErrorAction Stop | Out-Null
+            Write-Host "Re-enabled 'High Precision Event Timer'." -ForegroundColor Green
+        }
+    }
+    catch { Write-Warning "Failed to re-enable HPET: $($_.Exception.Message)" }
 }
 
 Write-Host ""

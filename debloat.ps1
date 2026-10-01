@@ -505,7 +505,7 @@ do {
         'Y' {
             if (-not $optionals.Y.Enabled) {
                 Write-Host "`n  WARNING: This disables selected System Devices in Device Manager." -ForegroundColor Red
-                Write-Host "  It may affect Hyper-V, RDP redirection, virtual drives, HPET, or composite devices." -ForegroundColor Red
+                Write-Host "  It may affect Hyper-V, RDP redirection, virtual drives, or composite devices." -ForegroundColor Red
                 $confirm = Read-Host "  Are you sure? (Y/N)"
                 if ($confirm -match '^[YySs]$') { $optionals.Y.Enabled = $true }
             } else { $optionals.Y.Enabled = $false }
